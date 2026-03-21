@@ -12,6 +12,7 @@ import {
 } from "../../../../domain/jobs";
 import { getEnv } from "../../../../lib/env";
 import { settlePayment } from "../../../../lib/mpp";
+import { verifyBearerToken } from "../../../../lib/session";
 import { sendNotification } from "../../../../lib/telegram";
 
 const callbackSchema = z.object({
@@ -30,10 +31,10 @@ export type CallbackInput = z.infer<typeof callbackSchema>;
 export async function POST(request: NextRequest) {
 	const env = getEnv();
 
-	// Authenticate via shared secret
+	// Authenticate via shared secret (timing-safe comparison)
 	const authHeader = request.headers.get("Authorization");
 	const expectedSecret = env.DOBBY_CALLBACK_SECRET;
-	if (!expectedSecret || authHeader !== `Bearer ${expectedSecret}`) {
+	if (!expectedSecret || !verifyBearerToken(authHeader, expectedSecret)) {
 		return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 	}
 

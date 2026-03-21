@@ -264,13 +264,7 @@ describe("POST /api/internal/ecs-event", () => {
 
 	// --- Successful spot interruption handling ---
 
-	it("marks job as interrupted and triggers resume on spot interruption", async () => {
-		mockDecrypt.mockResolvedValueOnce("decrypted-git-token");
-		mockProvisionTask.mockResolvedValueOnce({
-			taskArn: "arn:aws:ecs:us-east-1:123:task/cluster/new-task",
-			clusterArn: "arn:aws:ecs:us-east-1:123:cluster/dobby",
-		});
-
+	it("marks job as interrupted on spot interruption without triggering resume", async () => {
 		const { POST } = await import("./route");
 		const req = createRequest(makeSpotInterruptionEvent());
 		// biome-ignore lint/suspicious/noExplicitAny: test helper
@@ -278,95 +272,22 @@ describe("POST /api/internal/ecs-event", () => {
 
 		expect(res.status).toBe(200);
 		const json = await res.json();
-		expect(json.action).toBe("resumed");
+		expect(json.action).toBe("marked_interrupted");
 		expect(json.jobId).toBe("db_V1StGXR8_Z5jdHi6B-myT");
 
-		// First set: mark as interrupted
+		// Only one DB update: mark as interrupted
+		expect(mockSet).toHaveBeenCalledOnce();
 		const interruptUpdate = mockSet.mock.calls[0]![0] as Record<string, unknown>;
 		expect(interruptUpdate.status).toBe("interrupted");
 
-		// Second set: resume to provisioning with resume count increment
-		const resumeUpdate = mockSet.mock.calls[1]![0] as Record<string, unknown>;
-		expect(resumeUpdate.status).toBe("provisioning");
-
-		// Third set: new ECS task ARN
-		const ecsUpdate = mockSet.mock.calls[2]![0] as Record<string, unknown>;
-		expect(ecsUpdate.ecsTaskArn).toBe("arn:aws:ecs:us-east-1:123:task/cluster/new-task");
-		expect(ecsUpdate.ecsClusterArn).toBe("arn:aws:ecs:us-east-1:123:cluster/dobby");
+		// Resume is NOT triggered — callback handler handles resume
+		expect(mockDecrypt).not.toHaveBeenCalled();
+		expect(mockProvisionTask).not.toHaveBeenCalled();
 	});
 
-	it("decrypts git credentials for the new task", async () => {
-		mockDecrypt.mockResolvedValueOnce("decrypted-git-token");
-		mockProvisionTask.mockResolvedValueOnce({
-			taskArn: "arn:aws:ecs:us-east-1:123:task/cluster/new-task",
-			clusterArn: "arn:aws:ecs:us-east-1:123:cluster/dobby",
-		});
-
-		const { POST } = await import("./route");
-		const req = createRequest(makeSpotInterruptionEvent());
-		// biome-ignore lint/suspicious/noExplicitAny: test helper
-		await POST(req as any);
-
-		expect(mockDecrypt).toHaveBeenCalledWith("encrypted-git-creds");
-		expect(mockProvisionTask).toHaveBeenCalledOnce();
-		const provisionArgs = mockProvisionTask.mock.calls[0]!;
-		expect(provisionArgs[1].gitToken).toBe("decrypted-git-token");
-	});
-
-	it("decrypts caller secrets when present", async () => {
-		selectResult = [
-			makeJob({
-				encryptedSecrets: "encrypted-secrets-blob",
-			}),
-		];
-
-		mockDecrypt.mockResolvedValueOnce("decrypted-git-token");
-		mockDecrypt.mockResolvedValueOnce(JSON.stringify({ API_KEY: "secret123" }));
-		mockProvisionTask.mockResolvedValueOnce({
-			taskArn: "arn:aws:ecs:us-east-1:123:task/cluster/new-task",
-			clusterArn: "arn:aws:ecs:us-east-1:123:cluster/dobby",
-		});
-
-		const { POST } = await import("./route");
-		const req = createRequest(makeSpotInterruptionEvent());
-		// biome-ignore lint/suspicious/noExplicitAny: test helper
-		await POST(req as any);
-
-		expect(mockDecrypt).toHaveBeenCalledTimes(2);
-		expect(mockDecrypt).toHaveBeenCalledWith("encrypted-git-creds");
-		expect(mockDecrypt).toHaveBeenCalledWith("encrypted-secrets-blob");
-
-		const provisionArgs = mockProvisionTask.mock.calls[0]!;
-		expect(provisionArgs[1].secrets).toEqual({ API_KEY: "secret123" });
-	});
-
-	it("preserves lastCheckpointCommit when resuming", async () => {
-		selectResult = [makeJob({ lastCheckpointCommit: "abc123def456" })];
-
-		mockDecrypt.mockResolvedValueOnce("decrypted-git-token");
-		mockProvisionTask.mockResolvedValueOnce({
-			taskArn: "arn:aws:ecs:us-east-1:123:task/cluster/new-task",
-			clusterArn: "arn:aws:ecs:us-east-1:123:cluster/dobby",
-		});
-
-		const { POST } = await import("./route");
-		const req = createRequest(makeSpotInterruptionEvent());
-		// biome-ignore lint/suspicious/noExplicitAny: test helper
-		await POST(req as any);
-
-		const provisionArgs = mockProvisionTask.mock.calls[0]!;
-		expect(provisionArgs[0].lastCheckpointCommit).toBe("abc123def456");
-	});
-
-	it("handles resume from provisioning status", async () => {
+	it("handles spot interruption from provisioning status", async () => {
 		selectResult = [makeJob({ status: "provisioning" })];
 
-		mockDecrypt.mockResolvedValueOnce("decrypted-git-token");
-		mockProvisionTask.mockResolvedValueOnce({
-			taskArn: "arn:aws:ecs:us-east-1:123:task/cluster/new-task",
-			clusterArn: "arn:aws:ecs:us-east-1:123:cluster/dobby",
-		});
-
 		const { POST } = await import("./route");
 		const req = createRequest(makeSpotInterruptionEvent());
 		// biome-ignore lint/suspicious/noExplicitAny: test helper
@@ -374,18 +295,12 @@ describe("POST /api/internal/ecs-event", () => {
 
 		expect(res.status).toBe(200);
 		const json = await res.json();
-		expect(json.action).toBe("resumed");
+		expect(json.action).toBe("marked_interrupted");
 	});
 
-	it("handles resume from cloning status", async () => {
+	it("handles spot interruption from cloning status", async () => {
 		selectResult = [makeJob({ status: "cloning" })];
 
-		mockDecrypt.mockResolvedValueOnce("decrypted-git-token");
-		mockProvisionTask.mockResolvedValueOnce({
-			taskArn: "arn:aws:ecs:us-east-1:123:task/cluster/new-task",
-			clusterArn: "arn:aws:ecs:us-east-1:123:cluster/dobby",
-		});
-
 		const { POST } = await import("./route");
 		const req = createRequest(makeSpotInterruptionEvent());
 		// biome-ignore lint/suspicious/noExplicitAny: test helper
@@ -393,42 +308,6 @@ describe("POST /api/internal/ecs-event", () => {
 
 		expect(res.status).toBe(200);
 		const json = await res.json();
-		expect(json.action).toBe("resumed");
-	});
-
-	// --- Resume failure handling ---
-
-	it("returns 200 even if resume fails (non-fatal)", async () => {
-		mockDecrypt.mockRejectedValueOnce(new Error("KMS unavailable"));
-		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-		const { POST } = await import("./route");
-		const req = createRequest(makeSpotInterruptionEvent());
-		// biome-ignore lint/suspicious/noExplicitAny: test helper
-		const res = await POST(req as any);
-
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		expect(body.action).toBe("resume_failed");
-		expect(consoleSpy).toHaveBeenCalled();
-		consoleSpy.mockRestore();
-	});
-
-	it("fails resume when job has no encrypted git credentials", async () => {
-		selectResult = [makeJob({ encryptedGitCredentials: "" })];
-		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-		const { POST } = await import("./route");
-		const req = createRequest(makeSpotInterruptionEvent());
-		// biome-ignore lint/suspicious/noExplicitAny: test helper
-		const res = await POST(req as any);
-
-		expect(res.status).toBe(200);
-		// Job still gets marked as interrupted even if resume fails
-		const interruptUpdate = mockSet.mock.calls[0]![0] as Record<string, unknown>;
-		expect(interruptUpdate.status).toBe("interrupted");
-
-		expect(consoleSpy).toHaveBeenCalled();
-		consoleSpy.mockRestore();
+		expect(json.action).toBe("marked_interrupted");
 	});
 });

@@ -66,13 +66,20 @@ export async function provisionTask(
 		{ name: "DOBBY_WORKING_BRANCH", value: job.workingBranch },
 		{ name: "DOBBY_GIT_TOKEN", value: decryptedSecrets.gitToken },
 		{ name: "DOBBY_CALLBACK_URL", value: `${env.DOBBY_CALLBACK_URL ?? ""}/api/internal/callback` },
+		{ name: "DOBBY_CALLBACK_SECRET", value: env.DOBBY_CALLBACK_SECRET ?? "" },
 		{ name: "DOBBY_CHECKPOINT_COMMIT", value: job.lastCheckpointCommit ?? "" },
 		{ name: "DOBBY_EXISTING_PR_URL", value: job.existingPrUrl ?? "" },
 	];
 
-	// Inject caller secrets as additional env vars
+	// Inject caller secrets as additional env vars (block reserved names)
 	if (decryptedSecrets.secrets) {
+		const reservedPrefixes = ["DOBBY_", "AWS_", "ECS_"];
+		const reservedNames = new Set(["PATH", "HOME", "USER", "SHELL"]);
 		for (const [key, value] of Object.entries(decryptedSecrets.secrets)) {
+			const upperKey = key.toUpperCase();
+			if (reservedNames.has(upperKey) || reservedPrefixes.some((p) => upperKey.startsWith(p))) {
+				continue; // Skip reserved environment variable names
+			}
 			containerEnv.push({ name: key, value });
 		}
 	}

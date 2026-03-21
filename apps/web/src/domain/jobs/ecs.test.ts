@@ -119,6 +119,7 @@ describe("ecs", () => {
 		it("injects correct container environment variables", async () => {
 			setRequiredEnv();
 			vi.stubEnv("DOBBY_CALLBACK_URL", "https://dobby.rent");
+			vi.stubEnv("DOBBY_CALLBACK_SECRET", "test-secret-123");
 
 			mockSend.mockResolvedValueOnce({
 				tasks: [{ taskArn: "arn:task/1", clusterArn: "arn:cluster/1" }],
@@ -149,12 +150,48 @@ describe("ecs", () => {
 			expect(envMap.get("DOBBY_WORKING_BRANCH")).toBe("dobby/fix-bug-abc123");
 			expect(envMap.get("DOBBY_GIT_TOKEN")).toBe("ghp_mytoken");
 			expect(envMap.get("DOBBY_CALLBACK_URL")).toBe("https://dobby.rent/api/internal/callback");
+			expect(envMap.get("DOBBY_CALLBACK_SECRET")).toBe("test-secret-123");
 			expect(envMap.get("DOBBY_CHECKPOINT_COMMIT")).toBe("abc123sha");
 			expect(envMap.get("DOBBY_EXISTING_PR_URL")).toBe("https://github.com/org/repo/pull/42");
 
 			// Caller secrets injected as additional env vars
 			expect(envMap.get("DATABASE_URL")).toBe("postgres://...");
 			expect(envMap.get("API_KEY")).toBe("sk-123");
+		});
+
+		it("filters out reserved secret keys", async () => {
+			setRequiredEnv();
+
+			mockSend.mockResolvedValueOnce({
+				tasks: [{ taskArn: "arn:task/1", clusterArn: "arn:cluster/1" }],
+				failures: [],
+			});
+
+			await provisionTask(makeJob(), {
+				gitToken: "ghp_test",
+				secrets: {
+					SAFE_KEY: "safe-value",
+					DOBBY_CALLBACK_URL: "https://evil.com",
+					AWS_SECRET_ACCESS_KEY: "stolen",
+					ECS_CLUSTER_ARN: "arn:evil",
+					PATH: "/evil",
+					HOME: "/evil",
+				},
+			});
+
+			const call = mockSend.mock.calls[0]![0];
+			const envVars = call.input.overrides.containerOverrides[0].environment;
+			const envMap = new Map(
+				envVars.map((e: { name: string; value: string }) => [e.name, e.value]),
+			);
+
+			// Safe key should be present
+			expect(envMap.get("SAFE_KEY")).toBe("safe-value");
+
+			// Reserved keys should NOT be overwritten by user secrets
+			expect(envMap.get("DOBBY_CALLBACK_URL")).not.toBe("https://evil.com");
+			expect(envMap.get("PATH")).toBeUndefined();
+			expect(envMap.get("HOME")).toBeUndefined();
 		});
 
 		it("throws when ECS_CLUSTER_ARN is not configured", async () => {

@@ -6,6 +6,7 @@ import { calculateJobCost } from "../../../../domain/jobs/billing";
 import { stopTask } from "../../../../domain/jobs/ecs";
 import { ACTIVE_STATUSES, type JobStatus } from "../../../../domain/jobs/status";
 import { getEnv } from "../../../../lib/env";
+import { settlePayment } from "../../../../lib/mpp";
 import { sendNotification } from "../../../../lib/telegram";
 
 /**
@@ -65,6 +66,15 @@ export async function GET(request: Request) {
 			updateFields.encryptedSecrets = null;
 
 			await db.update(jobs).set(updateFields).where(eq(jobs.id, job.id));
+
+			// Settle MPP payment (non-blocking)
+			if (job.mppChannelId) {
+				const authorizedFlops = Number(job.authorizedFlops) || 0;
+				const finalCost = updateFields.costFlops ? Number(updateFields.costFlops) : 0;
+				settlePayment(job.mppChannelId, finalCost, authorizedFlops).catch((error) => {
+					console.error(`Failed to settle MPP payment for job ${job.id}:`, error);
+				});
+			}
 
 			// Send Telegram notification (non-blocking)
 			sendNotification(

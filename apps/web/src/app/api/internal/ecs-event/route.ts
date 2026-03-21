@@ -3,8 +3,9 @@ import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod/v4";
 import { getDb } from "../../../../db";
 import { jobs } from "../../../../db/schema";
-import { isValidTransition, resumeJob } from "../../../../domain/jobs";
+import { isValidTransition } from "../../../../domain/jobs";
 import { getEnv } from "../../../../lib/env";
+import { verifyBearerToken } from "../../../../lib/session";
 
 /**
  * Zod schema for the relevant subset of an ECS Task State Change event
@@ -27,10 +28,10 @@ const ecsEventSchema = z.object({
 export async function POST(request: NextRequest) {
 	const env = getEnv();
 
-	// Authenticate via shared secret (same as callback endpoint)
+	// Authenticate via shared secret (timing-safe comparison)
 	const authHeader = request.headers.get("Authorization");
 	const expectedSecret = env.DOBBY_CALLBACK_SECRET;
-	if (!expectedSecret || authHeader !== `Bearer ${expectedSecret}`) {
+	if (!expectedSecret || !verifyBearerToken(authHeader, expectedSecret)) {
 		return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 	}
 
@@ -75,16 +76,9 @@ export async function POST(request: NextRequest) {
 		});
 	}
 
-	// Mark job as interrupted
+	// Mark job as interrupted — resume is handled by the runner callback endpoint
+	// which has the checkpoint commit SHA from the runner's SIGTERM handler
 	await db.update(jobs).set({ status: "interrupted" }).where(eq(jobs.id, job.id));
 
-	// Trigger resume flow (non-fatal — job stays interrupted if resume fails)
-	try {
-		await resumeJob(job);
-	} catch (error) {
-		console.error(`Failed to resume job ${job.id} after spot interruption:`, error);
-		return NextResponse.json({ ok: true, action: "resume_failed", jobId: job.id });
-	}
-
-	return NextResponse.json({ ok: true, action: "resumed", jobId: job.id });
+	return NextResponse.json({ ok: true, action: "marked_interrupted", jobId: job.id });
 }

@@ -123,3 +123,16 @@ export async function clearAdminSession(): Promise<void> {
 	const cookieStore = await cookies();
 	cookieStore.delete(SESSION_COOKIE_NAME);
 }
+
+/**
+ * Timing-safe comparison of a Bearer token from an Authorization header
+ * against an expected secret value.
+ */
+export function verifyBearerToken(authHeader: string | null, expectedSecret: string): boolean {
+	if (!authHeader || !expectedSecret) return false;
+	const expected = `Bearer ${expectedSecret}`;
+	const a = Buffer.from(authHeader);
+	const b = Buffer.from(expected);
+	if (a.byteLength !== b.byteLength) return false;
+	return timingSafeEqual(a, b);
+}
