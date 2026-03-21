@@ -34,14 +34,14 @@ export const TERMINAL_STATUSES: readonly JobStatus[] = [
  * Valid status transitions. Each key maps to the set of statuses it can transition to.
  */
 const VALID_TRANSITIONS: Record<JobStatus, readonly JobStatus[]> = {
-	pending: ["provisioning", "failed"],
+	pending: ["provisioning", "failed", "stopped"],
 	provisioning: ["cloning", "failed", "interrupted", "stopped", "timed_out"],
 	cloning: ["executing", "failed", "interrupted", "stopped"],
 	executing: ["finalizing", "failed", "interrupted", "timed_out", "stopped"],
 	finalizing: ["completed", "failed", "stopped", "timed_out"],
 	completed: [],
 	failed: [],
-	interrupted: ["provisioning"],
+	interrupted: ["provisioning", "failed", "stopped"],
 	timed_out: [],
 	stopped: [],
 };

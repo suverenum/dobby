@@ -31,6 +31,7 @@ function setRequiredEnv() {
 	vi.stubEnv("ECS_SUBNETS", "subnet-abc123,subnet-def456");
 	vi.stubEnv("ECS_SECURITY_GROUPS", "sg-123456");
 	vi.stubEnv("KMS_KEY_ID", "arn:aws:kms:us-east-1:123456789:key/test-key");
+	vi.stubEnv("DOBBY_CALLBACK_URL", "https://app.example.com");
 }
 
 function makeJob(overrides: Record<string, unknown> = {}) {

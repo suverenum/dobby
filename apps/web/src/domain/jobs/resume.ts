@@ -31,7 +31,7 @@ export async function resumeJob(job: Job, checkpointCommit?: string): Promise<vo
 	// If another caller already claimed it, this update affects 0 rows.
 	const claimed = await db
 		.update(jobsTable)
-		.set({ status: "provisioning", ecsTaskArn: null })
+		.set({ status: "provisioning", ecsTaskArn: null, interruptedAt: null })
 		.where(and(eq(jobsTable.id, job.id), eq(jobsTable.status, "interrupted")))
 		.returning({ id: jobsTable.id });
 
