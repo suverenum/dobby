@@ -398,13 +398,13 @@ Provided as CDK or Terraform in the repo. Creates:
 **Goal:** Implement the core job domain: status transitions, ID generation, billing calculation.
 
 **Steps:**
-1. Create `apps/web/src/domain/jobs/` directory structure
-2. Implement job ID generator (`db_` prefix + nanoid)
-3. Implement job status enum: `pending`, `provisioning`, `cloning`, `executing`, `finalizing`, `completed`, `failed`, `interrupted`, `timed_out`, `stopped`
-4. Implement status transition validator (enforce valid transitions, reject invalid ones)
-5. Implement billing calculator: `ceil(duration_minutes) * (DOBBY_HOURLY_RATE / 60)`, max cap at `DOBBY_HOURLY_RATE * DOBBY_MAX_JOB_HOURS`
-6. Implement concurrency calculator: `floor(DOBBY_ACCOUNT_VCPU_LIMIT / DOBBY_VM_CPU)`
-7. Write unit tests for all of the above (state machine edge cases: double-stop, resume after timeout; billing: per-minute rounding, max cap, zero duration; concurrency: slot counting)
+- [x] Create `apps/web/src/domain/jobs/` directory structure
+- [x] Implement job ID generator (`db_` prefix + nanoid)
+- [x] Implement job status enum: `pending`, `provisioning`, `cloning`, `executing`, `finalizing`, `completed`, `failed`, `interrupted`, `timed_out`, `stopped`
+- [x] Implement status transition validator (enforce valid transitions, reject invalid ones)
+- [x] Implement billing calculator: `ceil(duration_minutes) * (DOBBY_HOURLY_RATE / 60)`, max cap at `DOBBY_HOURLY_RATE * DOBBY_MAX_JOB_HOURS`
+- [x] Implement concurrency calculator: `floor(DOBBY_ACCOUNT_VCPU_LIMIT / DOBBY_VM_CPU)`
+- [x] Write unit tests for all of the above (state machine edge cases: double-stop, resume after timeout; billing: per-minute rounding, max cap, zero duration; concurrency: slot counting)
 
 **Verification:** `bun run test` passes with coverage on domain/jobs/.
 
