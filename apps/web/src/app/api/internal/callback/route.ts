@@ -5,6 +5,7 @@ import { getDb } from "../../../../db";
 import { jobs } from "../../../../db/schema";
 import {
 	calculateJobCost,
+	isActiveStatus,
 	isTerminalStatus,
 	isValidJobId,
 	isValidTransition,
@@ -17,7 +18,7 @@ import { sendNotification } from "../../../../lib/telegram";
 
 const callbackSchema = z.object({
 	jobId: z.string().min(1, "jobId is required"),
-	status: z.enum(["completed", "failed", "interrupted"]),
+	status: z.enum(["cloning", "executing", "finalizing", "completed", "failed", "interrupted"]),
 	prUrl: z.string().url().optional(),
 	lastCheckpointCommit: z.string().optional(),
 });
@@ -68,8 +69,15 @@ export async function POST(request: NextRequest) {
 		return NextResponse.json({ error: "Job not found" }, { status: 404 });
 	}
 
-	// Validate status transition
-	if (!isValidTransition(job.status as Parameters<typeof isValidTransition>[0], input.status)) {
+	// Handle race condition: if ECS event already marked the job as interrupted
+	// and the runner callback also reports interrupted, skip transition validation
+	// and proceed directly to the resume flow.
+	const alreadyInterrupted = job.status === "interrupted" && input.status === "interrupted";
+
+	if (
+		!alreadyInterrupted &&
+		!isValidTransition(job.status as Parameters<typeof isValidTransition>[0], input.status)
+	) {
 		return NextResponse.json(
 			{ error: `Invalid status transition: ${job.status} → ${input.status}` },
 			{ status: 409 },
@@ -82,6 +90,11 @@ export async function POST(request: NextRequest) {
 	const updateFields: Record<string, unknown> = {
 		status: input.status,
 	};
+
+	// Set startedAt on first transition to an active status (cloning/executing/finalizing)
+	if (!job.startedAt && isActiveStatus(input.status)) {
+		updateFields.startedAt = now;
+	}
 
 	if (input.prUrl) {
 		updateFields.prUrl = input.prUrl;
@@ -116,7 +129,10 @@ export async function POST(request: NextRequest) {
 		updateFields.encryptedSecrets = null;
 	}
 
-	await db.update(jobs).set(updateFields).where(eq(jobs.id, input.jobId));
+	// Skip DB update if job is already interrupted (ECS event handled it)
+	if (!alreadyInterrupted) {
+		await db.update(jobs).set(updateFields).where(eq(jobs.id, input.jobId));
+	}
 
 	// On interrupted status: trigger resume flow
 	if (input.status === "interrupted") {

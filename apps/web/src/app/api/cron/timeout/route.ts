@@ -7,6 +7,7 @@ import { stopTask } from "../../../../domain/jobs/ecs";
 import { ACTIVE_STATUSES, type JobStatus } from "../../../../domain/jobs/status";
 import { getEnv } from "../../../../lib/env";
 import { settlePayment } from "../../../../lib/mpp";
+import { verifyBearerToken } from "../../../../lib/session";
 import { sendNotification } from "../../../../lib/telegram";
 
 /**
@@ -19,7 +20,7 @@ export async function GET(request: Request) {
 	// Verify Vercel Cron secret if configured (Vercel sends Authorization header)
 	const authHeader = request.headers.get("Authorization");
 	const cronSecret = process.env.CRON_SECRET;
-	if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+	if (cronSecret && !verifyBearerToken(authHeader, cronSecret)) {
 		return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 	}
 

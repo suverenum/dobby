@@ -207,6 +207,61 @@ describe("POST /api/internal/callback", () => {
 		expect(res.status).toBe(400);
 	});
 
+	it("accepts intermediate status cloning and sets startedAt", async () => {
+		selectResult = [makeJob({ status: "provisioning", startedAt: null })];
+		const { POST } = await import("./route");
+		const req = createRequest({
+			jobId: "db_V1StGXR8_Z5jdHi6B-myT",
+			status: "cloning",
+		});
+		// biome-ignore lint/suspicious/noExplicitAny: test helper
+		const res = await POST(req as any);
+
+		expect(res.status).toBe(200);
+		const updateData = mockSet.mock.calls[0]![0] as Record<string, unknown>;
+		expect(updateData.status).toBe("cloning");
+		expect(updateData.startedAt).toBeInstanceOf(Date);
+	});
+
+	it("does not overwrite startedAt on subsequent intermediate status", async () => {
+		const existingStartedAt = new Date("2026-03-21T10:01:00Z");
+		selectResult = [makeJob({ status: "cloning", startedAt: existingStartedAt })];
+		const { POST } = await import("./route");
+		const req = createRequest({
+			jobId: "db_V1StGXR8_Z5jdHi6B-myT",
+			status: "executing",
+		});
+		// biome-ignore lint/suspicious/noExplicitAny: test helper
+		const res = await POST(req as any);
+
+		expect(res.status).toBe(200);
+		const updateData = mockSet.mock.calls[0]![0] as Record<string, unknown>;
+		expect(updateData.status).toBe("executing");
+		expect(updateData.startedAt).toBeUndefined();
+	});
+
+	it("handles race condition: resumes when job is already interrupted", async () => {
+		selectResult = [makeJob({ status: "interrupted" })];
+		mockDecrypt.mockResolvedValueOnce("decrypted-git-token");
+		mockProvisionTask.mockResolvedValueOnce({
+			taskArn: "arn:aws:ecs:us-east-1:123:task/cluster/new-task",
+			clusterArn: "arn:aws:ecs:us-east-1:123:cluster/dobby",
+		});
+
+		const { POST } = await import("./route");
+		const req = createRequest({
+			jobId: "db_V1StGXR8_Z5jdHi6B-myT",
+			status: "interrupted",
+			lastCheckpointCommit: "abc123",
+		});
+		// biome-ignore lint/suspicious/noExplicitAny: test helper
+		const res = await POST(req as any);
+
+		expect(res.status).toBe(200);
+		// Should trigger resume even though job was already interrupted
+		expect(mockProvisionTask).toHaveBeenCalledOnce();
+	});
+
 	it("returns 400 for invalid job ID format", async () => {
 		const { POST } = await import("./route");
 		const req = createRequest({
