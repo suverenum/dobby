@@ -499,13 +499,13 @@ Provided as CDK or Terraform in the repo. Creates:
 **Goal:** Handle ECS task state change events from EventBridge for spot interruption detection.
 
 **Steps:**
-1. Create `apps/web/src/app/api/internal/ecs-event/route.ts` with POST handler
-2. Parse EventBridge event payload, extract `stopCode`, `taskArn`
-3. If `stopCode === "SpotInterruption"`: look up job by ecsTaskArn, mark as `interrupted`
-4. Wait for runner callback with checkpoint SHA (or 3-min timeout), then resume
-5. Write integration tests: spot interruption event triggers interrupt + resume, non-spot stop codes ignored
+- [x] Create `apps/web/src/app/api/internal/ecs-event/route.ts` with POST handler
+- [x] Parse EventBridge event payload, extract `stopCode`, `taskArn`
+- [x] If `stopCode === "SpotInterruption"`: look up job by ecsTaskArn, mark as `interrupted`
+- [x] Wait for runner callback with checkpoint SHA (or 3-min timeout), then resume
+- [x] Write integration tests: spot interruption event triggers interrupt + resume, non-spot stop codes ignored
 
-**Verification:** `bun run typecheck && bun run test` passes.
+**Verification:** `bun run typecheck && bun run test` passes. ✅
 
 ---
 
