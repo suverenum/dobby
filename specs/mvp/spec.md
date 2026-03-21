@@ -449,13 +449,13 @@ Provided as CDK or Terraform in the repo. Creates:
 **Goal:** Implement the job status polling endpoint.
 
 **Steps:**
-1. Create `apps/web/src/app/api/v1/jobs/[id]/route.ts` with GET handler
-2. Look up job by ID in DB, return 404 if not found
-3. Return job fields: id, status, repository, baseBranch, workingBranch, task (first 200 chars), prUrl, submittedAt, startedAt, finishedAt, costFlops, resumeCount
-4. Never return encrypted fields (encryptedGitCredentials, encryptedSecrets)
-5. Write integration tests: 404 for missing job, correct fields returned, encrypted fields omitted
+- [x] Create `apps/web/src/app/api/v1/jobs/[id]/route.ts` with GET handler
+- [x] Look up job by ID in DB, return 404 if not found
+- [x] Return job fields: id, status, repository, baseBranch, workingBranch, task (first 200 chars), prUrl, submittedAt, startedAt, finishedAt, costFlops, resumeCount
+- [x] Never return encrypted fields (encryptedGitCredentials, encryptedSecrets)
+- [x] Write integration tests: 404 for missing job, correct fields returned, encrypted fields omitted
 
-**Verification:** `bun run typecheck && bun run test` passes.
+**Verification:** `bun run typecheck && bun run test` passes. ✅
 
 ---
 
