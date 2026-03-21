@@ -514,14 +514,14 @@ Provided as CDK or Terraform in the repo. Creates:
 **Goal:** Implement cron-based timeout check for long-running jobs.
 
 **Steps:**
-1. Create `apps/web/src/app/api/cron/timeout/route.ts` with GET handler (Vercel Cron)
-2. Add cron config to `vercel.json`: run every 5 minutes
-3. Query jobs where `now - startedAt > DOBBY_MAX_JOB_HOURS` and status is active
-4. For each: call `ecs:StopTask` (SIGTERM), runner handles graceful shutdown and opens draft PR or leaves existing PR
-5. Update job status to `timed_out`
-6. Write unit tests: timeout detection logic, StopTask called for overdue jobs
+- [x] Create `apps/web/src/app/api/cron/timeout/route.ts` with GET handler (Vercel Cron)
+- [x] Add cron config to `vercel.json`: run every 5 minutes
+- [x] Query jobs where `now - startedAt > DOBBY_MAX_JOB_HOURS` and status is active
+- [x] For each: call `ecs:StopTask` (SIGTERM), runner handles graceful shutdown and opens draft PR or leaves existing PR
+- [x] Update job status to `timed_out`
+- [x] Write unit tests: timeout detection logic, StopTask called for overdue jobs
 
-**Verification:** `bun run typecheck && bun run test` passes.
+**Verification:** `bun run typecheck && bun run test` passes. ✅
 
 ---
 
