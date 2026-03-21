@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
@@ -131,8 +131,7 @@ export async function clearAdminSession(): Promise<void> {
 export function verifyBearerToken(authHeader: string | null, expectedSecret: string): boolean {
 	if (!authHeader || !expectedSecret) return false;
 	const expected = `Bearer ${expectedSecret}`;
-	const a = Buffer.from(authHeader);
-	const b = Buffer.from(expected);
-	if (a.byteLength !== b.byteLength) return false;
+	const a = createHash("sha256").update(authHeader).digest();
+	const b = createHash("sha256").update(expected).digest();
 	return timingSafeEqual(a, b);
 }

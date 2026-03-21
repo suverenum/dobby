@@ -38,7 +38,7 @@ const VALID_TRANSITIONS: Record<JobStatus, readonly JobStatus[]> = {
 	provisioning: ["cloning", "failed", "interrupted", "stopped"],
 	cloning: ["executing", "failed", "interrupted", "stopped"],
 	executing: ["finalizing", "failed", "interrupted", "timed_out", "stopped"],
-	finalizing: ["completed", "failed", "stopped"],
+	finalizing: ["completed", "failed", "stopped", "timed_out"],
 	completed: [],
 	failed: [],
 	interrupted: ["provisioning"],

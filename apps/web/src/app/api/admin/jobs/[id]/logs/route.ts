@@ -126,6 +126,21 @@ export async function GET(
 						isTerminalStatus(freshJob.status as JobStatus) ||
 						!isActiveStatus(freshJob.status as JobStatus)
 					) {
+						// Final fetch to capture any remaining log events
+						const finalCommand = new GetLogEventsCommand({
+							logGroupName: LOG_GROUP_PREFIX,
+							logStreamName: job.logStreamName!,
+							startFromHead: true,
+							...(nextToken && { nextToken }),
+						});
+						const finalResponse = await client.send(finalCommand);
+						for (const event of finalResponse.events ?? []) {
+							const data = JSON.stringify({
+								timestamp: event.timestamp,
+								message: event.message,
+							});
+							controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+						}
 						controller.enqueue(encoder.encode("data: [DONE]\n\n"));
 						controller.close();
 						streaming = false;

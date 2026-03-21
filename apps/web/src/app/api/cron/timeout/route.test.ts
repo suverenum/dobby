@@ -22,12 +22,21 @@ vi.mock("../../../../domain/jobs/ecs", () => ({
 	stopTask: (...args: unknown[]) => mockStopTask(...args),
 }));
 
+const TEST_CRON_SECRET = "test-cron-secret";
+
 function setRequiredEnv() {
 	vi.stubEnv("DATABASE_URL", "postgres://user:pass@host:5432/db");
 	vi.stubEnv("AWS_REGION", "us-east-1");
 	vi.stubEnv("DOBBY_MAX_JOB_HOURS", "6");
 	vi.stubEnv("DOBBY_HOURLY_RATE", "100");
 	vi.stubEnv("ECS_CLUSTER_ARN", "arn:aws:ecs:us-east-1:123456789:cluster/dobby");
+	vi.stubEnv("CRON_SECRET", TEST_CRON_SECRET);
+}
+
+function makeAuthenticatedRequest(url = "http://localhost/api/cron/timeout") {
+	return new Request(url, {
+		headers: { Authorization: `Bearer ${TEST_CRON_SECRET}` },
+	});
 }
 
 function makeJob(overrides: Record<string, unknown> = {}) {
@@ -115,7 +124,7 @@ describe("GET /api/cron/timeout", () => {
 		expect(response.status).toBe(200);
 	});
 
-	it("allows request when CRON_SECRET is not set", async () => {
+	it("returns 401 when CRON_SECRET is not set", async () => {
 		setRequiredEnv();
 		setupDbChain([]);
 
@@ -124,7 +133,7 @@ describe("GET /api/cron/timeout", () => {
 		const request = new Request("http://localhost/api/cron/timeout");
 		const response = await GET(request);
 
-		expect(response.status).toBe(200);
+		expect(response.status).toBe(401);
 	});
 
 	it("returns empty results when no overdue jobs found", async () => {
@@ -133,7 +142,7 @@ describe("GET /api/cron/timeout", () => {
 
 		const { GET } = await import("./route");
 
-		const request = new Request("http://localhost/api/cron/timeout");
+		const request = makeAuthenticatedRequest();
 		const response = await GET(request);
 
 		expect(response.status).toBe(200);
@@ -151,7 +160,7 @@ describe("GET /api/cron/timeout", () => {
 
 		const { GET } = await import("./route");
 
-		const request = new Request("http://localhost/api/cron/timeout");
+		const request = makeAuthenticatedRequest();
 		const response = await GET(request);
 
 		expect(response.status).toBe(200);
@@ -182,7 +191,7 @@ describe("GET /api/cron/timeout", () => {
 
 		const { GET } = await import("./route");
 
-		const request = new Request("http://localhost/api/cron/timeout");
+		const request = makeAuthenticatedRequest();
 		const response = await GET(request);
 
 		expect(response.status).toBe(200);
@@ -204,7 +213,7 @@ describe("GET /api/cron/timeout", () => {
 
 		const { GET } = await import("./route");
 
-		const request = new Request("http://localhost/api/cron/timeout");
+		const request = makeAuthenticatedRequest();
 		const response = await GET(request);
 
 		const body = await response.json();
@@ -220,7 +229,7 @@ describe("GET /api/cron/timeout", () => {
 
 		const { GET } = await import("./route");
 
-		const request = new Request("http://localhost/api/cron/timeout");
+		const request = makeAuthenticatedRequest();
 		const response = await GET(request);
 
 		const body = await response.json();
@@ -240,7 +249,7 @@ describe("GET /api/cron/timeout", () => {
 
 		const { GET } = await import("./route");
 
-		const request = new Request("http://localhost/api/cron/timeout");
+		const request = makeAuthenticatedRequest();
 		const response = await GET(request);
 
 		const body = await response.json();
@@ -257,7 +266,7 @@ describe("GET /api/cron/timeout", () => {
 
 		const { GET } = await import("./route");
 
-		const request = new Request("http://localhost/api/cron/timeout");
+		const request = makeAuthenticatedRequest();
 		await GET(request);
 
 		const updateArg = mockSet.mock.calls[0]![0];

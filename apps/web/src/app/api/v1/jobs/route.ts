@@ -11,7 +11,7 @@ import {
 	provisionTask,
 } from "../../../../domain/jobs";
 import { getEnv } from "../../../../lib/env";
-import { decrypt, encrypt } from "../../../../lib/kms";
+import { encrypt } from "../../../../lib/kms";
 import { MppError, validatePreauthorization } from "../../../../lib/mpp";
 
 const GITHUB_PR_URL_RE = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/\d+$/;
@@ -53,7 +53,7 @@ function generateWorkingBranch(task: string): string {
 		.trim()
 		.replace(/\s+/g, "-")
 		.slice(0, 40);
-	const suffix = Math.random().toString(36).slice(2, 8);
+	const suffix = crypto.randomUUID().slice(0, 8);
 	return `dobby/${slug}-${suffix}`;
 }
 
@@ -157,9 +157,8 @@ export async function POST(request: NextRequest) {
 
 	// Provision Fargate task
 	try {
-		const decryptedGitToken = await decrypt(encryptedGitCredentials);
 		const decryptedSecrets: { gitToken: string; secrets?: Record<string, string> } = {
-			gitToken: decryptedGitToken,
+			gitToken: input.gitToken,
 		};
 		if (input.secrets) {
 			decryptedSecrets.secrets = input.secrets;
