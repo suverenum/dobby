@@ -585,13 +585,13 @@ Provided as CDK or Terraform in the repo. Creates:
 **Goal:** Send Telegram messages on job status transitions.
 
 **Steps:**
-1. Create `apps/web/src/lib/telegram.ts` with `sendNotification(job, newStatus)` function
-2. Use Telegram Bot API `sendMessage` via fetch (no SDK needed)
-3. Message format: job ID, first 2 lines of task, duration, cost, links to admin page and PR
-4. Read `DOBBY_TELEGRAM_BOT_TOKEN` + `DOBBY_TELEGRAM_CHAT_ID` from env
-5. If env vars not set, silently skip (no error)
-6. Trigger from callback endpoint (Task 7) and timeout cron (Task 9)
-7. Write unit tests: message formatting for all statuses, truncation of long task text, graceful skip when env vars missing
+- [x] Create `apps/web/src/lib/telegram.ts` with `sendNotification(job, newStatus)` function
+- [x] Use Telegram Bot API `sendMessage` via fetch (no SDK needed)
+- [x] Message format: job ID, first 2 lines of task, duration, cost, links to admin page and PR
+- [x] Read `DOBBY_TELEGRAM_BOT_TOKEN` + `DOBBY_TELEGRAM_CHAT_ID` from env
+- [x] If env vars not set, silently skip (no error)
+- [x] Trigger from callback endpoint (Task 7) and timeout cron (Task 9)
+- [x] Write unit tests: message formatting for all statuses, truncation of long task text, graceful skip when env vars missing
 
 **Verification:** `bun run typecheck && bun run test` passes.
 

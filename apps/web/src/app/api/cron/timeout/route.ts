@@ -6,6 +6,7 @@ import { calculateJobCost } from "../../../../domain/jobs/billing";
 import { stopTask } from "../../../../domain/jobs/ecs";
 import { ACTIVE_STATUSES, type JobStatus } from "../../../../domain/jobs/status";
 import { getEnv } from "../../../../lib/env";
+import { sendNotification } from "../../../../lib/telegram";
 
 /**
  * Cron endpoint that checks for jobs exceeding DOBBY_MAX_JOB_HOURS and stops them.
@@ -65,6 +66,16 @@ export async function GET(request: Request) {
 
 			await db.update(jobs).set(updateFields).where(eq(jobs.id, job.id));
 
+			// Send Telegram notification (non-blocking)
+			sendNotification(
+				{
+					...job,
+					costFlops: (updateFields.costFlops as string) ?? job.costFlops,
+					finishedAt: now,
+				},
+				"timed_out",
+			).catch(() => {});
+
 			results.push({ jobId: job.id, stopped: true });
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "Unknown error";
@@ -72,8 +83,6 @@ export async function GET(request: Request) {
 			results.push({ jobId: job.id, stopped: false, error: message });
 		}
 	}
-
-	// TODO: Trigger Telegram notification for timed-out jobs (Task 13)
 
 	return NextResponse.json({
 		timedOut: results.filter((r) => r.stopped).length,

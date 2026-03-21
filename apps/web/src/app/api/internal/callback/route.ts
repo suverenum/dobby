@@ -13,6 +13,7 @@ import {
 } from "../../../../domain/jobs";
 import { getEnv } from "../../../../lib/env";
 import { decrypt } from "../../../../lib/kms";
+import { sendNotification } from "../../../../lib/telegram";
 
 type Job = InferSelectModel<typeof jobs>;
 
@@ -120,7 +121,14 @@ export async function POST(request: NextRequest) {
 		}
 	}
 
-	// TODO: Trigger Telegram notification (Task 13)
+	// Send Telegram notification (non-blocking, errors are logged but not fatal)
+	const updatedJob = {
+		...job,
+		prUrl: (input.prUrl ?? job.prUrl) as string | null,
+		costFlops: (updateFields.costFlops as string) ?? job.costFlops,
+		finishedAt: (updateFields.finishedAt as Date) ?? job.finishedAt,
+	};
+	sendNotification(updatedJob, input.status).catch(() => {});
 
 	return NextResponse.json({ ok: true });
 }
