@@ -35,7 +35,14 @@ export async function POST(request: Request) {
 		return NextResponse.json({ error: "Invalid password" }, { status: 401 });
 	}
 
-	await createAdminSession();
+	try {
+		await createAdminSession();
+	} catch {
+		return NextResponse.json(
+			{ error: "Admin session configuration is missing (SESSION_SECRET)" },
+			{ status: 503 },
+		);
+	}
 
 	return NextResponse.json({ success: true });
 }

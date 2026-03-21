@@ -39,8 +39,9 @@ export async function GET(request: Request) {
 	const cutoff = new Date(Date.now() - maxJobMs);
 	const provisioningCutoff = new Date(Date.now() - PROVISIONING_STALL_TIMEOUT_MS);
 
-	// Find active or stale jobs that are overdue:
+	// Find active, interrupted, or stale jobs that are overdue:
 	// - Active jobs with startedAt before the max duration cutoff, OR
+	// - Interrupted jobs that exceeded max duration (resume keeps failing, MPP escrow stuck), OR
 	// - Jobs stuck in provisioning (startedAt is null) submitted before provisioning cutoff, OR
 	// - Pending jobs that were never provisioned (submitted before provisioning cutoff)
 	// Note: Resumed provisioning jobs (startedAt is set) are caught by the max duration check.
@@ -56,6 +57,7 @@ export async function GET(request: Request) {
 						and(isNull(jobs.startedAt), lt(jobs.submittedAt, provisioningCutoff)),
 					),
 				),
+				and(eq(jobs.status, "interrupted" as JobStatus), lt(jobs.startedAt, cutoff)),
 				and(eq(jobs.status, "pending"), lt(jobs.submittedAt, provisioningCutoff)),
 			),
 		);
@@ -64,8 +66,9 @@ export async function GET(request: Request) {
 
 	for (const job of overdueJobs) {
 		try {
-			// Stale pending jobs should be marked as failed, not timed_out
-			const targetStatus: JobStatus = job.status === "pending" ? "failed" : "timed_out";
+			// Stale pending/interrupted jobs should be marked as failed, not timed_out
+			const targetStatus: JobStatus =
+				job.status === "pending" || job.status === "interrupted" ? "failed" : "timed_out";
 
 			if (!isValidTransition(job.status as JobStatus, targetStatus)) {
 				results.push({
