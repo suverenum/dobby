@@ -415,12 +415,12 @@ Provided as CDK or Terraform in the repo. Creates:
 **Goal:** Encrypt/decrypt job secrets and git credentials using AWS KMS.
 
 **Steps:**
-1. Install `@aws-sdk/client-kms`
-2. Create `apps/web/src/lib/kms.ts` with `encrypt(plaintext: string): Promise<string>` and `decrypt(ciphertext: string): Promise<string>` (base64-encoded ciphertext stored in DB)
-3. KMS client reads `KMS_KEY_ID` and AWS credentials from env
-4. Write unit tests with mocked KMS client (verify encrypted values stored, plaintext never persisted, correct key ID used)
+- [x] Install `@aws-sdk/client-kms`
+- [x] Create `apps/web/src/lib/kms.ts` with `encrypt(plaintext: string): Promise<string>` and `decrypt(ciphertext: string): Promise<string>` (base64-encoded ciphertext stored in DB)
+- [x] KMS client reads `KMS_KEY_ID` and AWS credentials from env
+- [x] Write unit tests with mocked KMS client (verify encrypted values stored, plaintext never persisted, correct key ID used)
 
-**Verification:** `bun run typecheck && bun run test` passes.
+**Verification:** `bun run typecheck && bun run test` passes. ✅
 
 ---
 

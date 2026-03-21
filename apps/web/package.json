@@ -16,6 +16,7 @@
 		"db:studio": "drizzle-kit studio"
 	},
 	"dependencies": {
+		"@aws-sdk/client-kms": "^3.1014.0",
 		"@neondatabase/serverless": "^0.10.0",
 		"@sentry/nextjs": "^10.45.0",
 		"@suverenum/ui": "workspace:*",
