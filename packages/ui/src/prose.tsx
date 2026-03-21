@@ -1,4 +1,4 @@
-import { cn } from "@template/utils";
+import { cn } from "@suverenum/utils";
 import type { ComponentProps, ElementType } from "react";
 
 type ProseProps<T extends ElementType = "div"> = Omit<ComponentProps<T>, "as" | "className"> & {

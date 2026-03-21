@@ -1,4 +1,4 @@
-import { Button } from "@template/ui";
+import { Button } from "@suverenum/ui";
 import { ThemeToggle } from "../components/theme-toggle";
 
 export default function Home() {
@@ -7,7 +7,7 @@ export default function Home() {
 			<div className="absolute right-4 top-4">
 				<ThemeToggle />
 			</div>
-			<h1 className="text-4xl font-bold text-zinc-900 dark:text-white">Template App</h1>
+			<h1 className="text-4xl font-bold text-zinc-900 dark:text-white">Dobby</h1>
 			<p className="text-lg text-zinc-600 dark:text-zinc-400">
 				Your project is ready. Start building.
 			</p>

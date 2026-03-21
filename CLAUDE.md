@@ -36,7 +36,7 @@ bun run storybook    # Start Storybook for UI components
 ### Styling
 - Tailwind CSS v4 with PostCSS + Protocol theme (emerald accent, zinc neutrals)
 - Dark mode via `next-themes` with system preference sync
-- CVA for component variants, `cn()` from `@template/utils`
+- CVA for component variants, `cn()` from `@suverenum/utils`
 - `@tailwindcss/typography` for prose content
 
 ## Testing

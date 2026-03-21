@@ -22,7 +22,7 @@ Instructions for AI coding agents (Claude Code, Cursor, Copilot, etc.) working o
 - Keep route files thin — business logic belongs in `src/domain/`
 - Each domain is self-contained: `actions/`, `components/`, `hooks/`, `queries/`
 - Colocate tests: `component.tsx` + `component.test.tsx` in the same directory
-- Use `@/` path alias for app imports, `@template/ui` and `@template/utils` for shared packages
+- Use `@/` path alias for app imports, `@suverenum/ui` and `@suverenum/utils` for shared packages
 
 ## Writing Tests
 
@@ -50,7 +50,7 @@ src/domain/[name]/
 ## Adding a New Shared Package
 
 1. Create `packages/[name]/` with `package.json`, `tsconfig.json`
-2. Name it `@template/[name]`
+2. Name it `@suverenum/[name]`
 3. Export raw TypeScript (no build step)
 4. Add `workspace:*` dependency in consuming packages
 5. Add to `transpilePackages` in `apps/web/next.config.ts`

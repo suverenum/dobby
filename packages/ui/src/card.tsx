@@ -1,4 +1,4 @@
-import { cn } from "@template/utils";
+import { cn } from "@suverenum/utils";
 import { cva, type VariantProps } from "class-variance-authority";
 import type { ComponentProps } from "react";
 

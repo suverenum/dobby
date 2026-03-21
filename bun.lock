@@ -14,18 +14,18 @@
       },
     },
     "apps/web": {
-      "name": "@template/web",
+      "name": "@suverenum/web",
       "version": "0.0.0",
       "dependencies": {
         "@neondatabase/serverless": "^0.10.0",
         "@sentry/nextjs": "^10.45.0",
+        "@suverenum/ui": "workspace:*",
+        "@suverenum/utils": "workspace:*",
         "@tailwindcss/postcss": "^4.0.0",
         "@tailwindcss/typography": "^0.5.19",
         "@tanstack/react-query": "^5.91.3",
         "@tanstack/react-query-devtools": "^5.91.3",
         "@tanstack/react-query-persist-client": "^5.90.27",
-        "@template/ui": "workspace:*",
-        "@template/utils": "workspace:*",
         "drizzle-orm": "^0.44.0",
         "idb-keyval": "^6.2.2",
         "import-in-the-middle": "^3.0.0",
@@ -41,7 +41,7 @@
       },
       "devDependencies": {
         "@playwright/test": "^1.58.2",
-        "@template/tsconfig": "workspace:*",
+        "@suverenum/tsconfig": "workspace:*",
         "@testing-library/jest-dom": "^6.6.0",
         "@testing-library/react": "^16.1.0",
         "@types/node": "^22.0.0",
@@ -57,21 +57,21 @@
       },
     },
     "packages/tsconfig": {
-      "name": "@template/tsconfig",
+      "name": "@suverenum/tsconfig",
       "version": "0.0.0",
     },
     "packages/ui": {
-      "name": "@template/ui",
+      "name": "@suverenum/ui",
       "version": "0.0.0",
       "dependencies": {
         "@radix-ui/react-slot": "^1.1.0",
-        "@template/utils": "workspace:*",
+        "@suverenum/utils": "workspace:*",
         "class-variance-authority": "^0.7.0",
       },
       "devDependencies": {
         "@storybook/react-vite": "^10.3.1",
+        "@suverenum/tsconfig": "workspace:*",
         "@tailwindcss/vite": "^4.2.2",
-        "@template/tsconfig": "workspace:*",
         "@testing-library/jest-dom": "^6.6.0",
         "@testing-library/react": "^16.1.0",
         "@types/react": "^19.0.0",
@@ -92,14 +92,14 @@
       },
     },
     "packages/utils": {
-      "name": "@template/utils",
+      "name": "@suverenum/utils",
       "version": "0.0.0",
       "dependencies": {
         "clsx": "^2.1.0",
         "tailwind-merge": "^3.0.0",
       },
       "devDependencies": {
-        "@template/tsconfig": "workspace:*",
+        "@suverenum/tsconfig": "workspace:*",
         "typescript": "^5.7.0",
         "vitest": "^3.0.0",
       },
@@ -593,6 +593,14 @@
 
     "@storybook/react-vite": ["@storybook/react-vite@10.3.1", "", { "dependencies": { "@joshwooding/vite-plugin-react-docgen-typescript": "^0.6.4", "@rollup/pluginutils": "^5.0.2", "@storybook/builder-vite": "10.3.1", "@storybook/react": "10.3.1", "empathic": "^2.0.0", "magic-string": "^0.30.0", "react-docgen": "^8.0.0", "resolve": "^1.22.8", "tsconfig-paths": "^4.2.0" }, "peerDependencies": { "react": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0", "react-dom": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0", "storybook": "^10.3.1", "vite": "^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0" } }, "sha512-6ATC5oZKXtNFdyLR1DyJY9s6qDltFL/Dfew6loJK4bBqd5a46+wpNJebMBhBxdhHa9FDJS5tv2noNSO5kXc+Sw=="],
 
+    "@suverenum/tsconfig": ["@suverenum/tsconfig@workspace:packages/tsconfig"],
+
+    "@suverenum/ui": ["@suverenum/ui@workspace:packages/ui"],
+
+    "@suverenum/utils": ["@suverenum/utils@workspace:packages/utils"],
+
+    "@suverenum/web": ["@suverenum/web@workspace:apps/web"],
+
     "@swc/helpers": ["@swc/helpers@0.5.15", "", { "dependencies": { "tslib": "^2.8.0" } }, "sha512-JQ5TuMi45Owi4/BIMAJBoSQoOJu12oOk/gADqlcUL9JEdHB8vyjUSsxqeNXnmXHjYKMi2WcYtezGEEhqUI/E2g=="],
 
     "@tailwindcss/node": ["@tailwindcss/node@4.2.2", "", { "dependencies": { "@jridgewell/remapping": "^2.3.5", "enhanced-resolve": "^5.19.0", "jiti": "^2.6.1", "lightningcss": "1.32.0", "magic-string": "^0.30.21", "source-map-js": "^1.2.1", "tailwindcss": "4.2.2" } }, "sha512-pXS+wJ2gZpVXqFaUEjojq7jzMpTGf8rU6ipJz5ovJV6PUGmlJ+jvIwGrzdHdQ80Sg+wmQxUFuoW1UAAwHNEdFA=="],
@@ -640,14 +648,6 @@
     "@tanstack/react-query-devtools": ["@tanstack/react-query-devtools@5.91.3", "", { "dependencies": { "@tanstack/query-devtools": "5.93.0" }, "peerDependencies": { "@tanstack/react-query": "^5.90.20", "react": "^18 || ^19" } }, "sha512-nlahjMtd/J1h7IzOOfqeyDh5LNfG0eULwlltPEonYy0QL+nqrBB+nyzJfULV+moL7sZyxc2sHdNJki+vLA9BSA=="],
 
     "@tanstack/react-query-persist-client": ["@tanstack/react-query-persist-client@5.90.27", "", { "dependencies": { "@tanstack/query-persist-client-core": "5.92.4" }, "peerDependencies": { "@tanstack/react-query": "^5.91.2", "react": "^18 || ^19" } }, "sha512-rKiCZ2C0kzmyDoLfrPHz2UdEDKHo/oXkKVRbhgtHya/bWH6jWDFX5cSFc1SLB33FDrgR8uOG1MwVohBrI4+F8A=="],
-
-    "@template/tsconfig": ["@template/tsconfig@workspace:packages/tsconfig"],
-
-    "@template/ui": ["@template/ui@workspace:packages/ui"],
-
-    "@template/utils": ["@template/utils@workspace:packages/utils"],
-
-    "@template/web": ["@template/web@workspace:apps/web"],
 
     "@testing-library/dom": ["@testing-library/dom@10.4.1", "", { "dependencies": { "@babel/code-frame": "^7.10.4", "@babel/runtime": "^7.12.5", "@types/aria-query": "^5.0.1", "aria-query": "5.3.0", "dom-accessibility-api": "^0.5.9", "lz-string": "^1.5.0", "picocolors": "1.1.1", "pretty-format": "^27.0.2" } }, "sha512-o4PXJQidqJl82ckFaXUeoAW+XysPLauYI43Abki5hABd853iMhitooc6znOnczgbTYmEP6U6/y1ZyKAIsvMKGg=="],
 

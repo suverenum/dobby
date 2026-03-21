@@ -1,5 +1,5 @@
 {
-	"extends": "@template/tsconfig/react-library.json",
+	"extends": "@suverenum/tsconfig/react-library.json",
 	"compilerOptions": {
 		"outDir": "./dist",
 		"rootDir": "./src"

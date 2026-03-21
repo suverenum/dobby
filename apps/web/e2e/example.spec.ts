@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test("app loads and renders landing page", async ({ page }) => {
 	await page.goto("/");
-	await expect(page.locator("h1")).toHaveText("Template App");
+	await expect(page.locator("h1")).toHaveText("Dobby");
 	await expect(page.locator("button")).toHaveText("Get Started");
 });
 

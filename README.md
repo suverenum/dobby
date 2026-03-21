@@ -1,4 +1,4 @@
-# Template App
+# Dobby
 
 Monorepo boilerplate with Next.js 16, Bun, Turborepo, Drizzle ORM, Neon Postgres, Tailwind CSS v4, Protocol theme, Storybook, Biome, Vitest, Playwright, Sentry, and PostHog.
 
@@ -18,7 +18,7 @@ bun run dev
 ```
 
 The setup script will:
-1. Rename all `@template` / `template-app` placeholders to your project name
+1. Rename all `@suverenum` / `dobby` placeholders to your project name
 2. Optionally create and link a Vercel project
 3. Optionally create a Neon Postgres database
 4. Generate `.env.local` and install dependencies

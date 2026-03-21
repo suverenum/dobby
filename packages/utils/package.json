@@ -1,5 +1,5 @@
 {
-	"name": "@template/utils",
+	"name": "@suverenum/utils",
 	"version": "0.0.0",
 	"private": true,
 	"license": "MIT",
@@ -19,7 +19,7 @@
 		"tailwind-merge": "^3.0.0"
 	},
 	"devDependencies": {
-		"@template/tsconfig": "workspace:*",
+		"@suverenum/tsconfig": "workspace:*",
 		"typescript": "^5.7.0",
 		"vitest": "^3.0.0"
 	}

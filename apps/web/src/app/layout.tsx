@@ -3,7 +3,7 @@ import { Providers } from "../components/providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
-	title: "Template App",
+	title: "Dobby",
 	description: "A boilerplate Next.js application",
 };
 

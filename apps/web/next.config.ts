@@ -4,7 +4,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
 	reactCompiler: true,
 	serverExternalPackages: ["import-in-the-middle", "require-in-the-middle"],
-	transpilePackages: ["@template/ui", "@template/utils"],
+	transpilePackages: ["@suverenum/ui", "@suverenum/utils"],
 };
 
 export default withSentryConfig(nextConfig, {

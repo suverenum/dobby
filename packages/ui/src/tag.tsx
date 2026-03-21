@@ -1,4 +1,4 @@
-import { cn } from "@template/utils";
+import { cn } from "@suverenum/utils";
 import type { ComponentProps } from "react";
 
 const variantStyles = {
