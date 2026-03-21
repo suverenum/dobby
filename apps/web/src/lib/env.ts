@@ -15,6 +15,7 @@ const envSchema = z.object({
 
 	// Dobby — Admin
 	DOBBY_ADMIN_PASSWORD_HASH: z.string().optional(),
+	CRON_SECRET: z.string().optional(),
 
 	// Dobby — Job config
 	DOBBY_HOURLY_RATE: z.coerce.number().positive().default(100),

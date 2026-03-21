@@ -13,6 +13,7 @@ import {
 import { getEnv } from "../../../../lib/env";
 import { encrypt } from "../../../../lib/kms";
 import { MppError, validatePreauthorization } from "../../../../lib/mpp";
+import { sendNotification } from "../../../../lib/telegram";
 
 const GITHUB_PR_URL_RE = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/\d+$/;
 
@@ -189,6 +190,23 @@ export async function POST(request: NextRequest) {
 				...(logStreamName && { logStreamName }),
 			})
 			.where(eq(jobs.id, jobId));
+
+		// Send Telegram notification (non-blocking)
+		sendNotification(
+			{
+				id: jobId,
+				task: input.task,
+				repository: input.repository,
+				prUrl: null,
+				startedAt: null,
+				finishedAt: null,
+				costFlops: null,
+				resumeCount: 0,
+			},
+			"provisioning",
+		).catch((err) => {
+			console.error(`Failed to send Telegram notification for job ${jobId}:`, err);
+		});
 
 		return NextResponse.json({ id: jobId, status: "provisioning" }, { status: 201 });
 	} catch (error) {

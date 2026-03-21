@@ -58,6 +58,13 @@ export function LogViewer({ jobId, isTerminal }: LogViewerProps) {
 							return;
 						}
 
+						if (data === "[RECONNECT]") {
+							// Server hit streaming timeout; reconnect to continue
+							reader.cancel();
+							connect();
+							return;
+						}
+
 						try {
 							const entry: LogEntry = JSON.parse(data);
 							setLogs((prev) => [...prev, entry]);

@@ -40,7 +40,27 @@ export default async function AdminJobDetailPage({ params }: Props) {
 	const { id } = await params;
 	const db = getDb();
 
-	const rows = await db.select().from(jobs).where(eq(jobs.id, id));
+	const rows = await db
+		.select({
+			id: jobs.id,
+			status: jobs.status,
+			repository: jobs.repository,
+			baseBranch: jobs.baseBranch,
+			workingBranch: jobs.workingBranch,
+			task: jobs.task,
+			existingPrUrl: jobs.existingPrUrl,
+			prUrl: jobs.prUrl,
+			ecsTaskArn: jobs.ecsTaskArn,
+			logStreamName: jobs.logStreamName,
+			authorizedFlops: jobs.authorizedFlops,
+			costFlops: jobs.costFlops,
+			submittedAt: jobs.submittedAt,
+			startedAt: jobs.startedAt,
+			finishedAt: jobs.finishedAt,
+			resumeCount: jobs.resumeCount,
+		})
+		.from(jobs)
+		.where(eq(jobs.id, id));
 	const job = rows[0];
 	if (!job) {
 		notFound();
