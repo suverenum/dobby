@@ -21,7 +21,7 @@ type Job = InferSelectModel<typeof jobs>;
 export async function resumeJob(job: Job, checkpointCommit?: string): Promise<void> {
 	const db = getDb();
 
-	if (!job.encryptedGitCredentials) {
+	if (!job.encryptedGitCredentials || job.encryptedGitCredentials === "") {
 		throw new Error(`Job ${job.id} has no encrypted git credentials for resume`);
 	}
 

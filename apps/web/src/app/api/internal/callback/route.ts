@@ -19,7 +19,11 @@ import { sendNotification } from "../../../../lib/telegram";
 const callbackSchema = z.object({
 	jobId: z.string().min(1, "jobId is required"),
 	status: z.enum(["cloning", "executing", "finalizing", "completed", "failed", "interrupted"]),
-	prUrl: z.string().url().optional(),
+	prUrl: z
+		.string()
+		.url()
+		.refine((u) => /^https?:\/\//.test(u), "prUrl must use http(s)")
+		.optional(),
 	lastCheckpointCommit: z.string().optional(),
 	ecsTaskArn: z.string().optional(),
 });

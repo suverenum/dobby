@@ -116,6 +116,7 @@ export async function provisionTask(
 				{
 					name: containerName,
 					environment: containerEnv,
+					...(env.DOBBY_CONTAINER_IMAGE && { image: env.DOBBY_CONTAINER_IMAGE }),
 				},
 			],
 			cpu: String(env.DOBBY_VM_CPU * 1024), // vCPU in CPU units (1024 per vCPU)
