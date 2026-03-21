@@ -12,6 +12,35 @@ const envSchema = z.object({
 	NEXT_PUBLIC_POSTHOG_HOST: z.string().optional(),
 	TURBO_TOKEN: z.string().optional(),
 	TURBO_TEAM: z.string().optional(),
+
+	// Dobby — Admin
+	DOBBY_ADMIN_PASSWORD_HASH: z.string().optional(),
+
+	// Dobby — Job config
+	DOBBY_HOURLY_RATE: z.coerce.number().positive().default(100),
+	DOBBY_MAX_JOB_HOURS: z.coerce.number().positive().default(6),
+	DOBBY_ACCOUNT_VCPU_LIMIT: z.coerce.number().positive().default(24),
+	DOBBY_VM_CPU: z.coerce.number().positive().default(4),
+	DOBBY_CONTAINER_IMAGE: z.string().optional(),
+	DOBBY_CALLBACK_SECRET: z.string().optional(),
+
+	// Dobby — Telegram
+	DOBBY_TELEGRAM_BOT_TOKEN: z.string().optional(),
+	DOBBY_TELEGRAM_CHAT_ID: z.string().optional(),
+
+	// Dobby — AWS
+	AWS_REGION: z.string().default("us-east-1"),
+	AWS_ACCESS_KEY_ID: z.string().optional(),
+	AWS_SECRET_ACCESS_KEY: z.string().optional(),
+	ECS_CLUSTER_ARN: z.string().optional(),
+	ECS_TASK_DEFINITION_ARN: z.string().optional(),
+	ECS_SUBNETS: z.string().optional(),
+	ECS_SECURITY_GROUPS: z.string().optional(),
+	KMS_KEY_ID: z.string().optional(),
+
+	// Dobby — MPP
+	MPP_ENDPOINT: z.string().optional(),
+	MPP_API_KEY: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -30,4 +59,9 @@ export function getEnv(): Env {
 
 	_env = result.data;
 	return _env;
+}
+
+/** Reset cached env (for testing) */
+export function _resetEnv(): void {
+	_env = undefined;
 }
