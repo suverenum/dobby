@@ -602,15 +602,13 @@ Provided as CDK or Terraform in the repo. Creates:
 **Goal:** Implement Machine Payments Protocol preauthorization, escrow, and settlement.
 
 **Steps:**
-1. Create `apps/web/src/lib/mpp.ts` with:
-   - `validatePreauthorization(mppToken, maxBudget)`: validate MPP-Token header covers `DOBBY_HOURLY_RATE * DOBBY_MAX_JOB_HOURS`
-   - `settlePayment(job)`: calculate actual cost, call `escrow.close()` with final amount
-2. Integrate into POST /v1/jobs (Task 4): validate payment before job creation
-3. Integrate into callback endpoint (Task 7): settle payment on terminal status
-4. Store `mppChannelId` on job row
-5. Write unit tests: preauth validation, settlement calculation, refund on early completion
+- [x] Create `apps/web/src/lib/mpp.ts` with `validatePreauthorization(mppToken, maxBudget)` and `settlePayment(mppChannelId, actualCost, authorizedAmount)` — dev mode fallback when MPP_ENDPOINT not configured
+- [x] Integrate into POST /v1/jobs (Task 4): validate payment before job creation, return 402 on invalid preauth
+- [x] Integrate into callback endpoint (Task 7): settle payment on terminal status (non-blocking)
+- [x] Store `mppChannelId` on job row from MPP validation result
+- [x] Write unit tests: preauth validation (dev mode, endpoint mode, invalid token, error handling), settlement (dev mode, endpoint mode, refund calculation, zero cost), integration tests in route tests (402 responses, settlement on callback)
 
-**Verification:** `bun run typecheck && bun run test` passes.
+**Verification:** `bun run typecheck && bun run test` passes. ✅
 
 ---
 

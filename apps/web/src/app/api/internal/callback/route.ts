@@ -13,6 +13,7 @@ import {
 } from "../../../../domain/jobs";
 import { getEnv } from "../../../../lib/env";
 import { decrypt } from "../../../../lib/kms";
+import { settlePayment } from "../../../../lib/mpp";
 import { sendNotification } from "../../../../lib/telegram";
 
 type Job = InferSelectModel<typeof jobs>;
@@ -93,15 +94,24 @@ export async function POST(request: NextRequest) {
 		updateFields.lastCheckpointCommit = input.lastCheckpointCommit;
 	}
 
-	// On terminal status: set finishedAt, calculate cost, clear encrypted secrets
+	// On terminal status: set finishedAt, calculate cost, settle payment, clear encrypted secrets
 	if (isTerminalStatus(input.status)) {
 		updateFields.finishedAt = now;
 
 		// Calculate cost if job was started
+		let cost = 0;
 		if (job.startedAt) {
 			const durationMs = now.getTime() - new Date(job.startedAt).getTime();
-			const cost = calculateJobCost(durationMs, env.DOBBY_HOURLY_RATE, env.DOBBY_MAX_JOB_HOURS);
+			cost = calculateJobCost(durationMs, env.DOBBY_HOURLY_RATE, env.DOBBY_MAX_JOB_HOURS);
 			updateFields.costFlops = cost.toString();
+		}
+
+		// Settle MPP payment (non-blocking — errors logged but not fatal)
+		if (job.mppChannelId) {
+			const authorizedFlops = Number(job.authorizedFlops) || 0;
+			settlePayment(job.mppChannelId, cost, authorizedFlops).catch((error) => {
+				console.error(`Failed to settle MPP payment for job ${job.id}:`, error);
+			});
 		}
 
 		// Delete encrypted secrets on terminal status

@@ -12,6 +12,12 @@ vi.mock("../../../../domain/jobs/ecs", () => ({
 	provisionTask: (...args: unknown[]) => mockProvisionTask(...args),
 }));
 
+// Mock MPP settlePayment
+const mockSettlePayment = vi.fn();
+vi.mock("../../../../lib/mpp", () => ({
+	settlePayment: (...args: unknown[]) => mockSettlePayment(...args),
+}));
+
 // Mock database
 const mockUpdate = vi.fn();
 const mockSet = vi.fn();
@@ -107,6 +113,12 @@ describe("POST /api/internal/callback", () => {
 		mockSelectWhere.mockReset().mockImplementation(() => selectResult);
 		mockDecrypt.mockReset();
 		mockProvisionTask.mockReset();
+		mockSettlePayment.mockReset().mockResolvedValue({
+			settled: true,
+			channelId: "mpp-test",
+			settledAmount: 0,
+			refundedAmount: 0,
+		});
 
 		selectResult = [makeJob()];
 	});
@@ -448,6 +460,46 @@ describe("POST /api/internal/callback", () => {
 
 		expect(res.status).toBe(200);
 		expect(consoleSpy).toHaveBeenCalled();
+		consoleSpy.mockRestore();
+	});
+
+	it("settles MPP payment on terminal status", async () => {
+		setJobFinalizing();
+		const { POST } = await import("./route");
+		const req = createRequest(validCompletedBody);
+		// biome-ignore lint/suspicious/noExplicitAny: test helper
+		await POST(req as any);
+
+		expect(mockSettlePayment).toHaveBeenCalledOnce();
+		const [channelId, cost, authorized] = mockSettlePayment.mock.calls[0]!;
+		expect(channelId).toBe("mpp-test");
+		expect(typeof cost).toBe("number");
+		expect(authorized).toBe(600);
+	});
+
+	it("does not settle MPP payment when mppChannelId is null", async () => {
+		selectResult = [makeJob({ status: "finalizing", mppChannelId: null })];
+		const { POST } = await import("./route");
+		const req = createRequest(validCompletedBody);
+		// biome-ignore lint/suspicious/noExplicitAny: test helper
+		await POST(req as any);
+
+		expect(mockSettlePayment).not.toHaveBeenCalled();
+	});
+
+	it("does not fail if MPP settlement throws", async () => {
+		setJobFinalizing();
+		mockSettlePayment.mockRejectedValueOnce(new Error("MPP down"));
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		const { POST } = await import("./route");
+		const req = createRequest(validCompletedBody);
+		// biome-ignore lint/suspicious/noExplicitAny: test helper
+		const res = await POST(req as any);
+
+		expect(res.status).toBe(200);
+		// Allow async settlement error to propagate
+		await new Promise((resolve) => setTimeout(resolve, 10));
 		consoleSpy.mockRestore();
 	});
 

@@ -6,6 +6,18 @@ vi.mock("../../../../lib/kms", () => ({
 	encrypt: (...args: unknown[]) => mockEncrypt(...args),
 }));
 
+// Mock MPP
+const mockValidatePreauthorization = vi.fn();
+vi.mock("../../../../lib/mpp", () => ({
+	validatePreauthorization: (...args: unknown[]) => mockValidatePreauthorization(...args),
+	MppError: class MppError extends Error {
+		constructor(message: string) {
+			super(message);
+			this.name = "MppError";
+		}
+	},
+}));
+
 // Mock database
 const mockInsert = vi.fn();
 const mockValues = vi.fn();
@@ -51,9 +63,15 @@ describe("POST /v1/jobs", () => {
 		mockSelect.mockReset();
 		mockFrom.mockReset();
 		mockWhere.mockReset().mockImplementation(() => whereResult);
+		mockValidatePreauthorization.mockReset();
 		mockEncrypt.mockResolvedValue("encrypted-base64");
 		mockValues.mockResolvedValue(undefined);
 		whereResult = [{ count: 0 }];
+		mockValidatePreauthorization.mockResolvedValue({
+			valid: true,
+			channelId: "mpp-channel-123",
+			authorizedAmount: 600,
+		});
 	});
 
 	function createRequest(body: unknown, headers?: Record<string, string>) {
@@ -261,16 +279,62 @@ describe("POST /v1/jobs", () => {
 		expect(mockEncrypt).toHaveBeenCalledTimes(1);
 	});
 
-	it("stores mppChannelId from MPP-Token header", async () => {
-		const { POST } = await import("./route");
-		const req = createRequest(validBody, {
-			"MPP-Token": "channel-xyz",
+	it("stores mppChannelId from MPP validation result", async () => {
+		mockValidatePreauthorization.mockResolvedValueOnce({
+			valid: true,
+			channelId: "channel-xyz",
+			authorizedAmount: 600,
 		});
+
+		const { POST } = await import("./route");
+		const req = createRequest(validBody);
 		// biome-ignore lint/suspicious/noExplicitAny: test helper
 		await POST(req as any);
 
 		const insertedRow = mockValues.mock.calls[0]![0] as Record<string, unknown>;
 		expect(insertedRow.mppChannelId).toBe("channel-xyz");
+	});
+
+	it("returns 402 when MPP preauthorization is invalid", async () => {
+		mockValidatePreauthorization.mockResolvedValueOnce({
+			valid: false,
+			channelId: "",
+			authorizedAmount: 0,
+		});
+
+		const { POST } = await import("./route");
+		const req = createRequest(validBody);
+		// biome-ignore lint/suspicious/noExplicitAny: test helper
+		const res = await POST(req as any);
+
+		expect(res.status).toBe(402);
+		const json = await res.json();
+		expect(json.error).toContain("MPP preauthorization insufficient");
+	});
+
+	it("returns 402 when MPP endpoint returns an error", async () => {
+		const { MppError } = await import("../../../../lib/mpp");
+		mockValidatePreauthorization.mockRejectedValueOnce(
+			new MppError("MPP preauthorization failed (402): Insufficient funds"),
+		);
+
+		const { POST } = await import("./route");
+		const req = createRequest(validBody);
+		// biome-ignore lint/suspicious/noExplicitAny: test helper
+		const res = await POST(req as any);
+
+		expect(res.status).toBe(402);
+		const json = await res.json();
+		expect(json.error).toContain("MPP preauthorization failed");
+	});
+
+	it("passes max budget to validatePreauthorization", async () => {
+		const { POST } = await import("./route");
+		const req = createRequest(validBody);
+		// biome-ignore lint/suspicious/noExplicitAny: test helper
+		await POST(req as any);
+
+		expect(mockValidatePreauthorization).toHaveBeenCalledWith("mpp-test-token", 600);
 	});
 
 	it("generates working branch from task when no existingPrUrl", async () => {

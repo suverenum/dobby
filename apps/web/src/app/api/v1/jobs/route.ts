@@ -11,6 +11,7 @@ import {
 } from "../../../../domain/jobs";
 import { getEnv } from "../../../../lib/env";
 import { encrypt } from "../../../../lib/kms";
+import { MppError, validatePreauthorization } from "../../../../lib/mpp";
 
 const GITHUB_PR_URL_RE = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/\d+$/;
 
@@ -87,13 +88,32 @@ export async function POST(request: NextRequest) {
 		}
 	}
 
-	// MPP-Token validation (placeholder — full implementation in Task 14)
+	// MPP-Token validation
 	const mppToken = request.headers.get("MPP-Token");
 	if (!mppToken) {
 		return NextResponse.json({ error: "MPP-Token header is required" }, { status: 401 });
 	}
 
 	const env = getEnv();
+
+	// Validate MPP preauthorization covers max budget
+	const maxBudget = calculateMaxBudget(env.DOBBY_HOURLY_RATE, env.DOBBY_MAX_JOB_HOURS);
+	let mppResult: Awaited<ReturnType<typeof validatePreauthorization>>;
+	try {
+		mppResult = await validatePreauthorization(mppToken, maxBudget);
+	} catch (error) {
+		if (error instanceof MppError) {
+			return NextResponse.json({ error: error.message }, { status: 402 });
+		}
+		throw error;
+	}
+
+	if (!mppResult.valid) {
+		return NextResponse.json(
+			{ error: "MPP preauthorization insufficient for max job budget" },
+			{ status: 402 },
+		);
+	}
 
 	// Check concurrency
 	const db = getDb();
@@ -118,9 +138,6 @@ export async function POST(request: NextRequest) {
 	const encryptedGitCredentials = await encrypt(input.gitToken);
 	const encryptedSecrets = input.secrets ? await encrypt(JSON.stringify(input.secrets)) : null;
 
-	// Calculate authorized budget
-	const authorizedFlops = calculateMaxBudget(env.DOBBY_HOURLY_RATE, env.DOBBY_MAX_JOB_HOURS);
-
 	// Insert job row
 	await db.insert(jobs).values({
 		id: jobId,
@@ -132,8 +149,8 @@ export async function POST(request: NextRequest) {
 		existingPrUrl: input.existingPrUrl ?? null,
 		encryptedGitCredentials,
 		encryptedSecrets,
-		authorizedFlops: authorizedFlops.toString(),
-		mppChannelId: mppToken,
+		authorizedFlops: maxBudget.toString(),
+		mppChannelId: mppResult.channelId,
 	});
 
 	// TODO: Provision Fargate task (Task 6) — will call provisionTask() here
