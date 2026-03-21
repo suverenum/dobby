@@ -530,14 +530,14 @@ Provided as CDK or Terraform in the repo. Creates:
 **Goal:** Implement password-based admin login with session cookies.
 
 **Steps:**
-1. Install `bcryptjs` (or use Web Crypto for bcrypt-less verification)
-2. Create `apps/web/src/app/admin/login/page.tsx` — password form
-3. Create `apps/web/src/app/api/admin/login/route.ts` — POST handler: verify password against `DOBBY_ADMIN_PASSWORD_HASH` (bcrypt), set secure httpOnly session cookie
-4. Implement session middleware in `apps/web/src/lib/session.ts`: validate cookie, redirect to login if invalid
-5. Create admin layout `apps/web/src/app/admin/layout.tsx` that checks session
-6. Write tests: correct password sets cookie, wrong password returns 401, expired/missing cookie redirects to login
+- [x] Install `bcryptjs` (or use Web Crypto for bcrypt-less verification)
+- [x] Create `apps/web/src/app/admin/login/page.tsx` — password form
+- [x] Create `apps/web/src/app/api/admin/login/route.ts` — POST handler: verify password against `DOBBY_ADMIN_PASSWORD_HASH` (bcrypt), set secure httpOnly session cookie
+- [x] Implement session middleware in `apps/web/src/lib/session.ts`: validate cookie, redirect to login if invalid
+- [x] Create admin layout `apps/web/src/app/admin/layout.tsx` that checks session
+- [x] Write tests: correct password sets cookie, wrong password returns 401, expired/missing cookie redirects to login
 
-**Verification:** `bun run typecheck && bun run test` passes.
+**Verification:** `bun run typecheck && bun run test` passes. ✅
 
 ---
 
