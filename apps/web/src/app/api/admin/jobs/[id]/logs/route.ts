@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
 import { getDb } from "../../../../../../db";
 import { jobs } from "../../../../../../db/schema";
-import { isTerminalStatus, type JobStatus } from "../../../../../../domain/jobs";
+import { isActiveStatus, isTerminalStatus, type JobStatus } from "../../../../../../domain/jobs";
 import { getEnv } from "../../../../../../lib/env";
 import { validateAdminSession } from "../../../../../../lib/session";
 
@@ -32,6 +32,7 @@ export function _resetCWClient(): void {
 
 const LOG_GROUP_PREFIX = "/ecs/dobby-runner";
 const POLL_INTERVAL_MS = 2000;
+const MAX_STREAM_DURATION_MS = 55_000; // Stop before Vercel's 60s function timeout
 
 export async function GET(
 	_request: NextRequest,
@@ -63,6 +64,7 @@ export async function GET(
 			const client = getCWClient();
 			let nextToken: string | undefined;
 			let streaming = true;
+			const streamStart = Date.now();
 
 			try {
 				// For terminal jobs, fetch all logs at once
@@ -108,10 +110,22 @@ export async function GET(
 					// For active jobs, poll every 2 seconds
 					await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
 
+					// Stop if max stream duration exceeded
+					if (Date.now() - streamStart > MAX_STREAM_DURATION_MS) {
+						controller.enqueue(encoder.encode("data: [RECONNECT]\n\n"));
+						controller.close();
+						streaming = false;
+						break;
+					}
+
 					// Re-check job status
 					const freshRows = await db.select().from(jobs).where(eq(jobs.id, id));
 					const freshJob = freshRows[0];
-					if (!freshJob || isTerminalStatus(freshJob.status as JobStatus)) {
+					if (
+						!freshJob ||
+						isTerminalStatus(freshJob.status as JobStatus) ||
+						!isActiveStatus(freshJob.status as JobStatus)
+					) {
 						controller.enqueue(encoder.encode("data: [DONE]\n\n"));
 						controller.close();
 						streaming = false;

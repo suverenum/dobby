@@ -1,4 +1,4 @@
-import { inArray, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod/v4";
 import { getDb } from "../../../../db";
@@ -8,9 +8,10 @@ import {
 	calculateMaxBudget,
 	generateJobId,
 	hasCapacity,
+	provisionTask,
 } from "../../../../domain/jobs";
 import { getEnv } from "../../../../lib/env";
-import { encrypt } from "../../../../lib/kms";
+import { decrypt, encrypt } from "../../../../lib/kms";
 import { MppError, validatePreauthorization } from "../../../../lib/mpp";
 
 const GITHUB_PR_URL_RE = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/\d+$/;
@@ -115,12 +116,13 @@ export async function POST(request: NextRequest) {
 		);
 	}
 
-	// Check concurrency
+	// Check concurrency (include "pending" to prevent burst submissions bypassing the limit)
 	const db = getDb();
+	const concurrencyStatuses = [...ACTIVE_STATUSES, "pending" as const];
 	const activeCountResult = await db
 		.select({ count: sql<number>`count(*)::int` })
 		.from(jobs)
-		.where(inArray(jobs.status, [...ACTIVE_STATUSES]));
+		.where(inArray(jobs.status, concurrencyStatuses));
 
 	const activeJobCount = activeCountResult[0]?.count ?? 0;
 
@@ -153,8 +155,59 @@ export async function POST(request: NextRequest) {
 		mppChannelId: mppResult.channelId,
 	});
 
-	// TODO: Provision Fargate task (Task 6) — will call provisionTask() here
-	// For now, job stays in "pending" status until ECS orchestration is implemented
+	// Provision Fargate task
+	try {
+		const decryptedGitToken = await decrypt(encryptedGitCredentials);
+		const decryptedSecrets: { gitToken: string; secrets?: Record<string, string> } = {
+			gitToken: decryptedGitToken,
+		};
+		if (input.secrets) {
+			decryptedSecrets.secrets = input.secrets;
+		}
 
-	return NextResponse.json({ id: jobId, status: "pending" }, { status: 201 });
+		const jobForProvision = {
+			id: jobId,
+			task: input.task,
+			repository: input.repository,
+			baseBranch: input.baseBranch,
+			workingBranch,
+			existingPrUrl: input.existingPrUrl ?? null,
+			lastCheckpointCommit: null,
+		} as Parameters<typeof provisionTask>[0];
+
+		const result = await provisionTask(jobForProvision, decryptedSecrets);
+
+		// Derive log stream name from task ARN (awslogs format: prefix/container-name/task-id)
+		const taskId = result.taskArn.split("/").pop();
+		const logStreamName = taskId ? `dobby-runner/dobby-runner/${taskId}` : null;
+
+		await db
+			.update(jobs)
+			.set({
+				status: "provisioning",
+				ecsTaskArn: result.taskArn,
+				ecsClusterArn: result.clusterArn,
+				...(logStreamName && { logStreamName }),
+			})
+			.where(eq(jobs.id, jobId));
+
+		return NextResponse.json({ id: jobId, status: "provisioning" }, { status: 201 });
+	} catch (error) {
+		// Mark job as failed if provisioning fails
+		await db
+			.update(jobs)
+			.set({
+				status: "failed",
+				finishedAt: new Date(),
+				encryptedGitCredentials: "",
+				encryptedSecrets: null,
+			})
+			.where(eq(jobs.id, jobId));
+
+		console.error(`Failed to provision ECS task for job ${jobId}:`, error);
+		return NextResponse.json(
+			{ error: "Failed to provision job", id: jobId, status: "failed" },
+			{ status: 500 },
+		);
+	}
 }

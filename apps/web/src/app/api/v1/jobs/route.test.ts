@@ -2,8 +2,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock KMS
 const mockEncrypt = vi.fn();
+const mockDecrypt = vi.fn();
 vi.mock("../../../../lib/kms", () => ({
 	encrypt: (...args: unknown[]) => mockEncrypt(...args),
+	decrypt: (...args: unknown[]) => mockDecrypt(...args),
+}));
+
+// Mock ECS provisioning
+const mockProvisionTask = vi.fn();
+vi.mock("../../../../domain/jobs/ecs", () => ({
+	provisionTask: (...args: unknown[]) => mockProvisionTask(...args),
+	stopTask: vi.fn(),
+	_resetClient: vi.fn(),
 }));
 
 // Mock MPP
@@ -23,6 +33,8 @@ const mockInsert = vi.fn();
 const mockValues = vi.fn();
 const mockSelect = vi.fn();
 const mockFrom = vi.fn();
+const mockUpdateSet = vi.fn();
+const mockUpdateWhere = vi.fn();
 
 let whereResult: unknown[] = [{ count: 0 }];
 const mockWhere = vi.fn().mockImplementation(() => whereResult);
@@ -44,6 +56,17 @@ vi.mock("../../../../db", () => ({
 				},
 			};
 		},
+		update: () => ({
+			set: (...args: unknown[]) => {
+				mockUpdateSet(...args);
+				return {
+					where: (...args: unknown[]) => {
+						mockUpdateWhere(...args);
+						return Promise.resolve();
+					},
+				};
+			},
+		}),
 	}),
 }));
 
@@ -58,19 +81,28 @@ describe("POST /v1/jobs", () => {
 		vi.stubEnv("KMS_KEY_ID", "arn:aws:kms:us-east-1:123:key/test");
 		vi.stubEnv("AWS_REGION", "us-east-1");
 		mockEncrypt.mockReset();
+		mockDecrypt.mockReset();
 		mockInsert.mockReset();
 		mockValues.mockReset();
 		mockSelect.mockReset();
 		mockFrom.mockReset();
 		mockWhere.mockReset().mockImplementation(() => whereResult);
 		mockValidatePreauthorization.mockReset();
+		mockProvisionTask.mockReset();
+		mockUpdateSet.mockReset();
+		mockUpdateWhere.mockReset();
 		mockEncrypt.mockResolvedValue("encrypted-base64");
+		mockDecrypt.mockResolvedValue("ghp_test123");
 		mockValues.mockResolvedValue(undefined);
 		whereResult = [{ count: 0 }];
 		mockValidatePreauthorization.mockResolvedValue({
 			valid: true,
 			channelId: "mpp-channel-123",
 			authorizedAmount: 600,
+		});
+		mockProvisionTask.mockResolvedValue({
+			taskArn: "arn:aws:ecs:us-east-1:123:task/cluster/abc123",
+			clusterArn: "arn:aws:ecs:us-east-1:123:cluster/test",
 		});
 	});
 
@@ -101,7 +133,7 @@ describe("POST /v1/jobs", () => {
 		expect(res.status).toBe(201);
 		const json = await res.json();
 		expect(json.id).toMatch(/^db_/);
-		expect(json.status).toBe("pending");
+		expect(json.status).toBe("provisioning");
 	});
 
 	it("inserts job row with encrypted credentials", async () => {

@@ -46,12 +46,17 @@ export async function resumeJob(job: Job, checkpointCommit?: string): Promise<vo
 	// Provision new Fargate task
 	const result = await provisionTask(jobForProvision, decryptedSecrets);
 
-	// Store new ECS task ARN
+	// Derive log stream name from task ARN (awslogs format: prefix/container-name/task-id)
+	const taskId = result.taskArn.split("/").pop();
+	const logStreamName = taskId ? `dobby-runner/dobby-runner/${taskId}` : null;
+
+	// Store new ECS task ARN and log stream name
 	await db
 		.update(jobsTable)
 		.set({
 			ecsTaskArn: result.taskArn,
 			ecsClusterArn: result.clusterArn,
+			...(logStreamName && { logStreamName }),
 		})
 		.where(eq(jobsTable.id, job.id));
 }

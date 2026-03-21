@@ -4,7 +4,7 @@ import { getDb } from "../../../../db";
 import { jobs } from "../../../../db/schema";
 import { calculateJobCost } from "../../../../domain/jobs/billing";
 import { stopTask } from "../../../../domain/jobs/ecs";
-import { ACTIVE_STATUSES, type JobStatus } from "../../../../domain/jobs/status";
+import { ACTIVE_STATUSES, isValidTransition, type JobStatus } from "../../../../domain/jobs/status";
 import { getEnv } from "../../../../lib/env";
 import { settlePayment } from "../../../../lib/mpp";
 import { verifyBearerToken } from "../../../../lib/session";
@@ -43,6 +43,16 @@ export async function GET(request: Request) {
 
 	for (const job of overdueJobs) {
 		try {
+			// Skip if transition to timed_out is not valid (e.g., finalizing can only go to completed/failed/stopped)
+			if (!isValidTransition(job.status as JobStatus, "timed_out")) {
+				results.push({
+					jobId: job.id,
+					stopped: false,
+					error: `Cannot transition from ${job.status} to timed_out`,
+				});
+				continue;
+			}
+
 			// Stop the ECS task (sends SIGTERM to container)
 			if (job.ecsTaskArn) {
 				await stopTask(job);

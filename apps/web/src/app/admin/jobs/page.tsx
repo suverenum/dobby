@@ -64,17 +64,29 @@ export default async function AdminJobsPage({ searchParams }: Props) {
 
 	const db = getDb();
 
+	// Select only columns needed for rendering (exclude encrypted credentials)
+	const columns = {
+		id: jobs.id,
+		status: jobs.status,
+		repository: jobs.repository,
+		task: jobs.task,
+		submittedAt: jobs.submittedAt,
+		startedAt: jobs.startedAt,
+		finishedAt: jobs.finishedAt,
+		costFlops: jobs.costFlops,
+	};
+
 	const jobRows =
 		filter === "all"
-			? await db.select().from(jobs).orderBy(desc(jobs.submittedAt))
+			? await db.select(columns).from(jobs).orderBy(desc(jobs.submittedAt))
 			: filter === "active"
 				? await db
-						.select()
+						.select(columns)
 						.from(jobs)
 						.where(inArray(jobs.status, [...ACTIVE_STATUSES]))
 						.orderBy(desc(jobs.submittedAt))
 				: await db
-						.select()
+						.select(columns)
 						.from(jobs)
 						.where(eq(jobs.status, filter))
 						.orderBy(desc(jobs.submittedAt));

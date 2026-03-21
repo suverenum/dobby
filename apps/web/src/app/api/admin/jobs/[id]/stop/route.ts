@@ -69,15 +69,15 @@ export async function POST(
 		updateFields.costFlops = cost.toString();
 	}
 
-	// Settle MPP payment (non-blocking)
+	await db.update(jobs).set(updateFields).where(eq(jobs.id, id));
+
+	// Settle MPP payment after DB update succeeds (non-blocking)
 	if (job.mppChannelId) {
 		const authorizedFlops = Number(job.authorizedFlops) || 0;
 		settlePayment(job.mppChannelId, cost, authorizedFlops).catch((error) => {
 			console.error(`Failed to settle MPP payment for job ${id}:`, error);
 		});
 	}
-
-	await db.update(jobs).set(updateFields).where(eq(jobs.id, id));
 
 	// Send Telegram notification (non-blocking)
 	sendNotification(

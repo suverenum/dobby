@@ -116,14 +116,6 @@ export async function POST(request: NextRequest) {
 			updateFields.costFlops = cost.toString();
 		}
 
-		// Settle MPP payment (non-blocking — errors logged but not fatal)
-		if (job.mppChannelId) {
-			const authorizedFlops = Number(job.authorizedFlops) || 0;
-			settlePayment(job.mppChannelId, cost, authorizedFlops).catch((error) => {
-				console.error(`Failed to settle MPP payment for job ${job.id}:`, error);
-			});
-		}
-
 		// Delete encrypted secrets on terminal status
 		updateFields.encryptedGitCredentials = "";
 		updateFields.encryptedSecrets = null;
@@ -132,6 +124,15 @@ export async function POST(request: NextRequest) {
 	// Skip DB update if job is already interrupted (ECS event handled it)
 	if (!alreadyInterrupted) {
 		await db.update(jobs).set(updateFields).where(eq(jobs.id, input.jobId));
+	}
+
+	// Settle MPP payment after DB update succeeds (non-blocking — errors logged but not fatal)
+	if (isTerminalStatus(input.status) && job.mppChannelId) {
+		const authorizedFlops = Number(job.authorizedFlops) || 0;
+		const cost = updateFields.costFlops ? Number(updateFields.costFlops) : 0;
+		settlePayment(job.mppChannelId, cost, authorizedFlops).catch((error) => {
+			console.error(`Failed to settle MPP payment for job ${job.id}:`, error);
+		});
 	}
 
 	// On interrupted status: trigger resume flow
