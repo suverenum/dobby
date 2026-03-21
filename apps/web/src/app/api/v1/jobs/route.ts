@@ -94,7 +94,7 @@ export async function POST(request: NextRequest) {
 	// MPP-Token validation
 	const mppToken = request.headers.get("MPP-Token");
 	if (!mppToken) {
-		return NextResponse.json({ error: "MPP-Token header is required" }, { status: 401 });
+		return NextResponse.json({ error: "MPP-Token header is required" }, { status: 402 });
 	}
 
 	const env = getEnv();

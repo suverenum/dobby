@@ -42,8 +42,8 @@ export async function GET(request: Request) {
 	// Find active or stale jobs that are overdue:
 	// - Active jobs with startedAt before the max duration cutoff, OR
 	// - Jobs stuck in provisioning (startedAt is null) submitted before provisioning cutoff, OR
-	// - Resumed jobs stuck in provisioning (startedAt is set, submitted before provisioning cutoff), OR
 	// - Pending jobs that were never provisioned (submitted before provisioning cutoff)
+	// Note: Resumed provisioning jobs (startedAt is set) are caught by the max duration check.
 	const overdueJobs = await db
 		.select()
 		.from(jobs)
@@ -54,7 +54,6 @@ export async function GET(request: Request) {
 					or(
 						lt(jobs.startedAt, cutoff),
 						and(isNull(jobs.startedAt), lt(jobs.submittedAt, provisioningCutoff)),
-						and(eq(jobs.status, "provisioning"), lt(jobs.submittedAt, provisioningCutoff)),
 					),
 				),
 				and(eq(jobs.status, "pending"), lt(jobs.submittedAt, provisioningCutoff)),
@@ -160,7 +159,7 @@ export async function GET(request: Request) {
 					costFlops: costFlops ?? job.costFlops,
 					finishedAt: now,
 				},
-				"timed_out",
+				targetStatus,
 			).catch(() => {});
 
 			results.push({ jobId: job.id, stopped: true });

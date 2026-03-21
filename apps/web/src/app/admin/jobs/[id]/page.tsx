@@ -90,7 +90,9 @@ export default async function AdminJobDetailPage({ params }: Props) {
 						{job.status}
 					</Tag>
 				</div>
-				{active && <StopButton jobId={job.id} />}
+				{(active || status === "pending" || status === "interrupted") && (
+					<StopButton jobId={job.id} />
+				)}
 			</div>
 
 			<div className="grid gap-6">

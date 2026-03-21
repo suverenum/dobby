@@ -68,7 +68,10 @@ export async function provisionTask(
 		{ name: "DOBBY_BASE_BRANCH", value: job.baseBranch },
 		{ name: "DOBBY_WORKING_BRANCH", value: job.workingBranch },
 		{ name: "DOBBY_GIT_TOKEN", value: decryptedSecrets.gitToken },
-		{ name: "DOBBY_CALLBACK_URL", value: `${env.DOBBY_CALLBACK_URL}/api/internal/callback` },
+		{
+			name: "DOBBY_CALLBACK_URL",
+			value: `${env.DOBBY_CALLBACK_URL.replace(/\/+$/, "")}/api/internal/callback`,
+		},
 		{ name: "DOBBY_CALLBACK_SECRET", value: env.DOBBY_CALLBACK_SECRET ?? "" },
 		{ name: "DOBBY_CHECKPOINT_COMMIT", value: job.lastCheckpointCommit ?? "" },
 		{ name: "DOBBY_EXISTING_PR_URL", value: job.existingPrUrl ?? "" },

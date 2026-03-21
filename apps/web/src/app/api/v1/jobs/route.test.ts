@@ -248,7 +248,7 @@ describe("POST /v1/jobs", () => {
 		expect(res.status).toBe(201);
 	});
 
-	it("returns 401 when MPP-Token header is missing", async () => {
+	it("returns 402 when MPP-Token header is missing", async () => {
 		const { POST } = await import("./route");
 		const req = new Request("http://localhost:3000/api/v1/jobs", {
 			method: "POST",
@@ -258,7 +258,7 @@ describe("POST /v1/jobs", () => {
 		// biome-ignore lint/suspicious/noExplicitAny: test helper
 		const res = await POST(req as any);
 
-		expect(res.status).toBe(401);
+		expect(res.status).toBe(402);
 		const json = await res.json();
 		expect(json.error).toContain("MPP-Token");
 	});
