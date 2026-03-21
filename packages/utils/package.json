@@ -1,0 +1,26 @@
+{
+	"name": "@template/utils",
+	"version": "0.0.0",
+	"private": true,
+	"license": "MIT",
+	"type": "module",
+	"exports": {
+		".": {
+			"types": "./src/index.ts",
+			"default": "./src/index.ts"
+		}
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"clsx": "^2.1.0",
+		"tailwind-merge": "^3.0.0"
+	},
+	"devDependencies": {
+		"@template/tsconfig": "workspace:*",
+		"typescript": "^5.7.0",
+		"vitest": "^3.0.0"
+	}
+}

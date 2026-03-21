@@ -1,0 +1,6 @@
+{
+  "enabledPlugins": {
+    "hyperpowers@withzombies-hyper": true,
+    "context7@claude-plugins-official": true
+  }
+}

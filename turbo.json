@@ -1,0 +1,13 @@
+{
+	"$schema": "https://turbo.build/schema.json",
+	"tasks": {
+		"dev": { "cache": false, "persistent": true },
+		"build": { "outputs": [".next/**", "dist/**"], "dependsOn": ["^build"] },
+		"test": { "dependsOn": ["^build"] },
+		"lint": {},
+		"typecheck": { "dependsOn": ["^build"] },
+		"storybook": { "cache": false, "persistent": true },
+		"build-storybook": { "outputs": ["storybook-static/**"] },
+		"test:e2e": { "cache": false }
+	}
+}

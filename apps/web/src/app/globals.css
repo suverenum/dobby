@@ -1,0 +1,38 @@
+@import "tailwindcss";
+@source "../../../../packages/ui/src";
+@plugin "@tailwindcss/typography";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+	/* Typography scale */
+	--text-2xs: 0.75rem;
+	--text-2xs--line-height: 1.25rem;
+
+	/* Shadows */
+	--shadow-glow: 0 0 4px rgb(0 0 0 / 0.1);
+
+	/* Semantic color tokens — light mode */
+	--color-background: var(--color-white);
+	--color-foreground: var(--color-zinc-900);
+	--color-primary: var(--color-emerald-500);
+	--color-primary-foreground: var(--color-white);
+	--color-secondary: var(--color-zinc-100);
+	--color-secondary-foreground: var(--color-zinc-900);
+	--color-accent: var(--color-zinc-100);
+	--color-accent-foreground: var(--color-zinc-900);
+	--color-destructive: oklch(0.577 0.245 27.325);
+	--color-destructive-foreground: var(--color-white);
+	--color-muted: var(--color-zinc-100);
+	--color-muted-foreground: var(--color-zinc-600);
+	--color-card: var(--color-white);
+	--color-card-foreground: var(--color-zinc-900);
+	--color-border: var(--color-zinc-900 / 10);
+	--color-input: var(--color-zinc-900 / 10);
+	--color-ring: var(--color-emerald-500);
+}
+
+@layer base {
+	body {
+		@apply bg-white text-zinc-900 antialiased dark:bg-zinc-900 dark:text-white;
+	}
+}

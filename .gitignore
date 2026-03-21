@@ -1,0 +1,38 @@
+# dependencies
+node_modules/
+
+# next.js
+.next/
+out/
+
+# build output
+dist/
+
+# turbo
+.turbo/
+
+# env files
+.env.local
+.env.*.local
+
+# drizzle
+drizzle/meta/
+
+# playwright
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+# storybook
+storybook-static/
+
+# misc
+.DS_Store
+*.tsbuildinfo
+
+# vercel
+.vercel
+
+# ralphex progress logs
+.ralphex/progress/
