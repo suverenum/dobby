@@ -464,15 +464,15 @@ Provided as CDK or Terraform in the repo. Creates:
 **Goal:** Implement Fargate task provisioning, stopping, and status tracking.
 
 **Steps:**
-1. Install `@aws-sdk/client-ecs`
-2. Create `apps/web/src/domain/jobs/ecs.ts` with:
+- [x] Install `@aws-sdk/client-ecs`
+- [x] Create `apps/web/src/domain/jobs/ecs.ts` with:
    - `provisionTask(job, decryptedSecrets)`: calls `ecs:RunTask` with Fargate Spot capacity provider, overrides container env vars per section 6.4, updates job status to `provisioning` and stores ecsTaskArn
    - `stopTask(job)`: calls `ecs:StopTask`, sends SIGTERM to container
-3. Task definition uses `ECS_TASK_DEFINITION_ARN` from env, overrides environment variables
-4. Configure 4 vCPU / 16 GB / 20 GB ephemeral storage per spec
-5. Write unit tests with mocked ECS client: verify RunTask params (subnets, security groups, env var overrides), StopTask calls, error handling
+- [x] Task definition uses `ECS_TASK_DEFINITION_ARN` from env, overrides environment variables
+- [x] Configure 4 vCPU / 16 GB / 20 GB ephemeral storage per spec
+- [x] Write unit tests with mocked ECS client: verify RunTask params (subnets, security groups, env var overrides), StopTask calls, error handling
 
-**Verification:** `bun run typecheck && bun run test` passes.
+**Verification:** `bun run typecheck && bun run test` passes. ✅
 
 ---
 

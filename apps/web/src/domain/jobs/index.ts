@@ -1,5 +1,6 @@
 export { calculateJobCost, calculateMaxBudget } from "./billing";
 export { calculateMaxConcurrentJobs, hasCapacity } from "./concurrency";
+export { type DecryptedSecrets, type ProvisionResult, provisionTask, stopTask } from "./ecs";
 export { generateJobId, isValidJobId } from "./id";
 export {
 	ACTIVE_STATUSES,

@@ -23,6 +23,7 @@ const envSchema = z.object({
 	DOBBY_VM_CPU: z.coerce.number().positive().default(4),
 	DOBBY_CONTAINER_IMAGE: z.string().optional(),
 	DOBBY_CALLBACK_SECRET: z.string().optional(),
+	DOBBY_CALLBACK_URL: z.string().optional(),
 
 	// Dobby — Telegram
 	DOBBY_TELEGRAM_BOT_TOKEN: z.string().optional(),
