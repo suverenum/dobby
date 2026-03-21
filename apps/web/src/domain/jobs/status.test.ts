@@ -39,9 +39,11 @@ describe("isValidTransition", () => {
 		["provisioning", "cloning"],
 		["provisioning", "failed"],
 		["provisioning", "interrupted"],
+		["provisioning", "stopped"],
 		["cloning", "executing"],
 		["cloning", "failed"],
 		["cloning", "interrupted"],
+		["cloning", "stopped"],
 		["executing", "finalizing"],
 		["executing", "failed"],
 		["executing", "interrupted"],
@@ -49,6 +51,7 @@ describe("isValidTransition", () => {
 		["executing", "stopped"],
 		["finalizing", "completed"],
 		["finalizing", "failed"],
+		["finalizing", "stopped"],
 		["interrupted", "provisioning"],
 	];
 

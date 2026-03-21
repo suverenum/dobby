@@ -35,10 +35,10 @@ export const TERMINAL_STATUSES: readonly JobStatus[] = [
  */
 const VALID_TRANSITIONS: Record<JobStatus, readonly JobStatus[]> = {
 	pending: ["provisioning", "failed"],
-	provisioning: ["cloning", "failed", "interrupted"],
-	cloning: ["executing", "failed", "interrupted"],
+	provisioning: ["cloning", "failed", "interrupted", "stopped"],
+	cloning: ["executing", "failed", "interrupted", "stopped"],
 	executing: ["finalizing", "failed", "interrupted", "timed_out", "stopped"],
-	finalizing: ["completed", "failed"],
+	finalizing: ["completed", "failed", "stopped"],
 	completed: [],
 	failed: [],
 	interrupted: ["provisioning"],

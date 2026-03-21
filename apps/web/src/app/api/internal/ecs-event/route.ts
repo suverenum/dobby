@@ -1,14 +1,10 @@
-import type { InferSelectModel } from "drizzle-orm";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod/v4";
 import { getDb } from "../../../../db";
 import { jobs } from "../../../../db/schema";
-import { type DecryptedSecrets, isValidTransition, provisionTask } from "../../../../domain/jobs";
+import { isValidTransition, resumeJob } from "../../../../domain/jobs";
 import { getEnv } from "../../../../lib/env";
-import { decrypt } from "../../../../lib/kms";
-
-type Job = InferSelectModel<typeof jobs>;
 
 /**
  * Zod schema for the relevant subset of an ECS Task State Change event
@@ -87,50 +83,8 @@ export async function POST(request: NextRequest) {
 		await resumeJob(job);
 	} catch (error) {
 		console.error(`Failed to resume job ${job.id} after spot interruption:`, error);
+		return NextResponse.json({ ok: true, action: "resume_failed", jobId: job.id });
 	}
 
 	return NextResponse.json({ ok: true, action: "resumed", jobId: job.id });
-}
-
-/**
- * Resume a job after spot interruption by decrypting secrets and
- * provisioning a new Fargate task from the last checkpoint.
- */
-async function resumeJob(job: Job): Promise<void> {
-	const db = getDb();
-
-	if (!job.encryptedGitCredentials) {
-		throw new Error(`Job ${job.id} has no encrypted git credentials for resume`);
-	}
-
-	const gitToken = await decrypt(job.encryptedGitCredentials);
-	const decryptedSecrets: DecryptedSecrets = { gitToken };
-
-	if (job.encryptedSecrets) {
-		decryptedSecrets.secrets = JSON.parse(await decrypt(job.encryptedSecrets));
-	}
-
-	// Update job: transition back to provisioning, increment resume count
-	const updateFields: Record<string, unknown> = {
-		status: "provisioning",
-		resumeCount: sql`${jobs.resumeCount} + 1`,
-	};
-	await db.update(jobs).set(updateFields).where(eq(jobs.id, job.id));
-
-	// Provision new Fargate task with the existing checkpoint
-	const jobForProvision = {
-		...job,
-		lastCheckpointCommit: job.lastCheckpointCommit,
-	};
-
-	const result = await provisionTask(jobForProvision, decryptedSecrets);
-
-	// Store new ECS task ARN
-	await db
-		.update(jobs)
-		.set({
-			ecsTaskArn: result.taskArn,
-			ecsClusterArn: result.clusterArn,
-		})
-		.where(eq(jobs.id, job.id));
 }

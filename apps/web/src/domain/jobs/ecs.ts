@@ -79,7 +79,7 @@ export async function provisionTask(
 
 	const client = getClient();
 
-	const containerName = env.DOBBY_CONTAINER_IMAGE ? "dobby-runner" : "dobby-runner";
+	const containerName = "dobby-runner";
 
 	const command = new RunTaskCommand({
 		cluster: env.ECS_CLUSTER_ARN,

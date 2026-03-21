@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
@@ -33,7 +34,12 @@ async function verify(token: string, secret: string): Promise<string | null> {
 
 	const payload = token.slice(0, lastDot);
 	const expectedToken = await sign(payload, secret);
-	if (token !== expectedToken) return null;
+
+	// Timing-safe comparison to prevent timing attacks
+	const a = Buffer.from(token);
+	const b = Buffer.from(expectedToken);
+	if (a.byteLength !== b.byteLength) return null;
+	if (!timingSafeEqual(a, b)) return null;
 
 	return payload;
 }

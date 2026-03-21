@@ -52,17 +52,7 @@ export async function validatePreauthorization(
 		throw new MppError(`MPP preauthorization failed (${response.status}): ${errorText}`);
 	}
 
-	const data = (await response.json()) as {
-		valid: boolean;
-		channelId: string;
-		authorizedAmount: number;
-	};
-
-	return {
-		valid: data.valid,
-		channelId: data.channelId,
-		authorizedAmount: data.authorizedAmount,
-	};
+	return (await response.json()) as PreauthorizationResult;
 }
 
 /**
@@ -105,19 +95,7 @@ export async function settlePayment(
 		throw new MppError(`MPP settlement failed (${response.status}): ${errorText}`);
 	}
 
-	const data = (await response.json()) as {
-		settled: boolean;
-		channelId: string;
-		settledAmount: number;
-		refundedAmount: number;
-	};
-
-	return {
-		settled: data.settled,
-		channelId: data.channelId,
-		settledAmount: data.settledAmount,
-		refundedAmount: data.refundedAmount,
-	};
+	return (await response.json()) as SettlementResult;
 }
 
 export class MppError extends Error {

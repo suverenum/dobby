@@ -36,17 +36,37 @@ vi.mock("../../../../../../db", () => ({
 	}),
 }));
 
-// Mock ECS
+// Mock domain/jobs
 const mockStopTask = vi.fn();
+const mockCalculateJobCost = vi.fn().mockReturnValue(50);
 vi.mock("../../../../../../domain/jobs", () => ({
-	isActiveStatus: (status: string) =>
-		["provisioning", "cloning", "executing", "finalizing"].includes(status),
+	calculateJobCost: (...args: unknown[]) => mockCalculateJobCost(...args),
 	validateTransition: (from: string, to: string) => {
 		if (to === "stopped" && ["provisioning", "cloning", "executing", "finalizing"].includes(from))
 			return;
 		throw new Error(`Invalid transition from ${from} to ${to}`);
 	},
 	stopTask: (...args: unknown[]) => mockStopTask(...args),
+}));
+
+// Mock env
+vi.mock("../../../../../../lib/env", () => ({
+	getEnv: () => ({
+		DOBBY_HOURLY_RATE: 100,
+		DOBBY_MAX_JOB_HOURS: 6,
+	}),
+}));
+
+// Mock MPP
+const mockSettlePayment = vi.fn().mockResolvedValue({});
+vi.mock("../../../../../../lib/mpp", () => ({
+	settlePayment: (...args: unknown[]) => mockSettlePayment(...args),
+}));
+
+// Mock Telegram
+const mockSendNotification = vi.fn().mockResolvedValue(undefined);
+vi.mock("../../../../../../lib/telegram", () => ({
+	sendNotification: (...args: unknown[]) => mockSendNotification(...args),
 }));
 
 import { POST } from "./route";
@@ -91,6 +111,9 @@ describe("POST /api/admin/jobs/[id]/stop", () => {
 		mockUpdate.mockClear();
 		mockUpdateSet.mockClear();
 		mockUpdateWhere.mockClear();
+		mockSettlePayment.mockClear();
+		mockSendNotification.mockClear();
+		mockCalculateJobCost.mockClear().mockReturnValue(50);
 		mockJobRows = [];
 	});
 
@@ -125,7 +148,7 @@ describe("POST /api/admin/jobs/[id]/stop", () => {
 
 		expect(res.status).toBe(409);
 		const data = await res.json();
-		expect(data.error).toContain("Cannot stop job");
+		expect(data.error).toContain("Cannot transition");
 	});
 
 	it("stops an active job successfully", async () => {
@@ -142,7 +165,59 @@ describe("POST /api/admin/jobs/[id]/stop", () => {
 		expect(data.success).toBe(true);
 		expect(data.status).toBe("stopped");
 		expect(mockStopTask).toHaveBeenCalled();
-		expect(mockUpdateSet).toHaveBeenCalledWith(expect.objectContaining({ status: "stopped" }));
+		expect(mockUpdateSet).toHaveBeenCalledWith(
+			expect.objectContaining({
+				status: "stopped",
+				encryptedGitCredentials: "",
+				encryptedSecrets: null,
+			}),
+		);
+	});
+
+	it("calculates cost and clears secrets on stop", async () => {
+		mockValidateAdminSession.mockResolvedValue(true);
+		mockStopTask.mockResolvedValue(undefined);
+		mockJobRows = [makeJob({ status: "executing" })];
+
+		await POST(makeRequest() as never, {
+			params: Promise.resolve({ id: "db_test1" }),
+		});
+
+		expect(mockCalculateJobCost).toHaveBeenCalled();
+		expect(mockUpdateSet).toHaveBeenCalledWith(
+			expect.objectContaining({
+				costFlops: "50",
+				encryptedGitCredentials: "",
+				encryptedSecrets: null,
+			}),
+		);
+	});
+
+	it("settles MPP payment when mppChannelId is set", async () => {
+		mockValidateAdminSession.mockResolvedValue(true);
+		mockStopTask.mockResolvedValue(undefined);
+		mockJobRows = [makeJob({ status: "executing", mppChannelId: "ch_123" })];
+
+		await POST(makeRequest() as never, {
+			params: Promise.resolve({ id: "db_test1" }),
+		});
+
+		expect(mockSettlePayment).toHaveBeenCalledWith("ch_123", 50, 100);
+	});
+
+	it("sends Telegram notification on stop", async () => {
+		mockValidateAdminSession.mockResolvedValue(true);
+		mockStopTask.mockResolvedValue(undefined);
+		mockJobRows = [makeJob({ status: "executing" })];
+
+		await POST(makeRequest() as never, {
+			params: Promise.resolve({ id: "db_test1" }),
+		});
+
+		expect(mockSendNotification).toHaveBeenCalledWith(
+			expect.objectContaining({ id: "db_test1" }),
+			"stopped",
+		);
 	});
 
 	it("still updates status if ECS stopTask fails", async () => {

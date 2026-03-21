@@ -5,20 +5,8 @@ import { getDb } from "../../../db";
 import { jobs } from "../../../db/schema";
 import { ACTIVE_STATUSES, JOB_STATUSES, type JobStatus } from "../../../domain/jobs";
 import { requireAdminSession } from "../../../lib/session";
+import { STATUS_COLOR_MAP } from "./constants";
 import { JobStatusFilter } from "./status-filter";
-
-const STATUS_COLOR_MAP: Record<JobStatus, "emerald" | "sky" | "amber" | "rose" | "zinc"> = {
-	pending: "zinc",
-	provisioning: "sky",
-	cloning: "sky",
-	executing: "amber",
-	finalizing: "amber",
-	completed: "emerald",
-	failed: "rose",
-	interrupted: "amber",
-	timed_out: "rose",
-	stopped: "zinc",
-};
 
 export type StatusFilter = "all" | "active" | JobStatus;
 

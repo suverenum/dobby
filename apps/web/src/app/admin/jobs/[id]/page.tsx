@@ -6,21 +6,9 @@ import { getDb } from "../../../../db";
 import { jobs } from "../../../../db/schema";
 import { isActiveStatus, type JobStatus } from "../../../../domain/jobs";
 import { requireAdminSession } from "../../../../lib/session";
+import { STATUS_COLOR_MAP } from "../constants";
 import { LogViewer } from "./log-viewer";
 import { StopButton } from "./stop-button";
-
-const STATUS_COLOR_MAP: Record<JobStatus, "emerald" | "sky" | "amber" | "rose" | "zinc"> = {
-	pending: "zinc",
-	provisioning: "sky",
-	cloning: "sky",
-	executing: "amber",
-	finalizing: "amber",
-	completed: "emerald",
-	failed: "rose",
-	interrupted: "amber",
-	timed_out: "rose",
-	stopped: "zinc",
-};
 
 function formatTime(date: Date | null): string {
 	if (!date) return "-";

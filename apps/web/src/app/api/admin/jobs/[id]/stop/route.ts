@@ -3,12 +3,15 @@ import { type NextRequest, NextResponse } from "next/server";
 import { getDb } from "../../../../../../db";
 import { jobs } from "../../../../../../db/schema";
 import {
-	isActiveStatus,
+	calculateJobCost,
 	type JobStatus,
 	stopTask,
 	validateTransition,
 } from "../../../../../../domain/jobs";
+import { getEnv } from "../../../../../../lib/env";
+import { settlePayment } from "../../../../../../lib/mpp";
 import { validateAdminSession } from "../../../../../../lib/session";
+import { sendNotification } from "../../../../../../lib/telegram";
 
 export async function POST(
 	_request: NextRequest,
@@ -30,10 +33,6 @@ export async function POST(
 
 	const status = job.status as JobStatus;
 
-	if (!isActiveStatus(status)) {
-		return NextResponse.json({ error: `Cannot stop job in status: ${status}` }, { status: 409 });
-	}
-
 	try {
 		validateTransition(status, "stopped");
 	} catch {
@@ -53,14 +52,42 @@ export async function POST(
 		}
 	}
 
-	// Update job status
-	await db
-		.update(jobs)
-		.set({
-			status: "stopped",
-			finishedAt: new Date(),
-		})
-		.where(eq(jobs.id, id));
+	const env = getEnv();
+	const now = new Date();
+	const updateFields: Record<string, unknown> = {
+		status: "stopped",
+		finishedAt: now,
+		encryptedGitCredentials: "",
+		encryptedSecrets: null,
+	};
+
+	// Calculate cost if job was started
+	let cost = 0;
+	if (job.startedAt) {
+		const durationMs = now.getTime() - new Date(job.startedAt).getTime();
+		cost = calculateJobCost(durationMs, env.DOBBY_HOURLY_RATE, env.DOBBY_MAX_JOB_HOURS);
+		updateFields.costFlops = cost.toString();
+	}
+
+	// Settle MPP payment (non-blocking)
+	if (job.mppChannelId) {
+		const authorizedFlops = Number(job.authorizedFlops) || 0;
+		settlePayment(job.mppChannelId, cost, authorizedFlops).catch((error) => {
+			console.error(`Failed to settle MPP payment for job ${id}:`, error);
+		});
+	}
+
+	await db.update(jobs).set(updateFields).where(eq(jobs.id, id));
+
+	// Send Telegram notification (non-blocking)
+	sendNotification(
+		{
+			...job,
+			costFlops: (updateFields.costFlops as string) ?? job.costFlops,
+			finishedAt: now,
+		},
+		"stopped",
+	).catch(() => {});
 
 	return NextResponse.json({ success: true, status: "stopped" });
 }

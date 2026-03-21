@@ -409,7 +409,7 @@ describe("POST /api/internal/ecs-event", () => {
 
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.action).toBe("resumed");
+		expect(body.action).toBe("resume_failed");
 		expect(consoleSpy).toHaveBeenCalled();
 		consoleSpy.mockRestore();
 	});
