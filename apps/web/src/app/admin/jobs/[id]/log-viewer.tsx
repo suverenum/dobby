@@ -20,72 +20,83 @@ export function LogViewer({ jobId, isTerminal }: LogViewerProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
-		const abortController = new AbortController();
 		let active = true;
+		let currentAbort = new AbortController();
 
-		async function connect() {
-			try {
-				setConnected(true);
-				const response = await fetch(`/api/admin/jobs/${jobId}/logs`, {
-					signal: abortController.signal,
-				});
+		async function streamLogs() {
+			while (active) {
+				try {
+					currentAbort = new AbortController();
+					setConnected(true);
+					const response = await fetch(`/api/admin/jobs/${jobId}/logs`, {
+						signal: currentAbort.signal,
+					});
 
-				if (!response.ok || !response.body) {
+					if (!response.ok || !response.body) {
+						setConnected(false);
+						return;
+					}
+
+					const reader = response.body.getReader();
+					const decoder = new TextDecoder();
+					let buffer = "";
+					let shouldReconnect = false;
+
+					while (active) {
+						const { done: readerDone, value } = await reader.read();
+						if (readerDone) break;
+
+						buffer += decoder.decode(value, { stream: true });
+						const lines = buffer.split("\n\n");
+						buffer = lines.pop() ?? "";
+
+						for (const line of lines) {
+							const dataLine = line.trim();
+							if (!dataLine.startsWith("data: ")) continue;
+							const data = dataLine.slice(6);
+
+							if (data === "[DONE]") {
+								setDone(true);
+								setConnected(false);
+								return;
+							}
+
+							if (data === "[RECONNECT]") {
+								// Server hit streaming timeout; reconnect to continue
+								// Clear existing logs to avoid duplication since server replays from head
+								setLogs([]);
+								shouldReconnect = true;
+								break;
+							}
+
+							try {
+								const entry: LogEntry = JSON.parse(data);
+								setLogs((prev) => [...prev, entry]);
+							} catch {
+								// Skip malformed data
+							}
+						}
+
+						if (shouldReconnect) {
+							await reader.cancel();
+							break;
+						}
+					}
+
+					if (!shouldReconnect) return;
+				} catch (err) {
+					if (err instanceof DOMException && err.name === "AbortError") return;
 					setConnected(false);
 					return;
 				}
-
-				const reader = response.body.getReader();
-				const decoder = new TextDecoder();
-				let buffer = "";
-
-				while (active) {
-					const { done: readerDone, value } = await reader.read();
-					if (readerDone) break;
-
-					buffer += decoder.decode(value, { stream: true });
-					const lines = buffer.split("\n\n");
-					buffer = lines.pop() ?? "";
-
-					for (const line of lines) {
-						const dataLine = line.trim();
-						if (!dataLine.startsWith("data: ")) continue;
-						const data = dataLine.slice(6);
-
-						if (data === "[DONE]") {
-							setDone(true);
-							setConnected(false);
-							return;
-						}
-
-						if (data === "[RECONNECT]") {
-							// Server hit streaming timeout; reconnect to continue
-							// Clear existing logs to avoid duplication since server replays from head
-							setLogs([]);
-							reader.cancel();
-							connect();
-							return;
-						}
-
-						try {
-							const entry: LogEntry = JSON.parse(data);
-							setLogs((prev) => [...prev, entry]);
-						} catch {
-							// Skip malformed data
-						}
-					}
-				}
-			} catch (err) {
-				if (err instanceof DOMException && err.name === "AbortError") return;
-				setConnected(false);
 			}
 		}
 
-		connect();
+		streamLogs();
 
 		return () => {
 			active = false;
-			abortController.abort();
+			currentAbort.abort();
 		};
 	}, [jobId]);
 

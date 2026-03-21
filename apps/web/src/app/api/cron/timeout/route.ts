@@ -39,21 +39,25 @@ export async function GET(request: Request) {
 	const cutoff = new Date(Date.now() - maxJobMs);
 	const provisioningCutoff = new Date(Date.now() - PROVISIONING_STALL_TIMEOUT_MS);
 
-	// Find active jobs that are overdue:
-	// - Jobs with startedAt before the max duration cutoff, OR
+	// Find active or stale jobs that are overdue:
+	// - Active jobs with startedAt before the max duration cutoff, OR
 	// - Jobs stuck in provisioning (startedAt is null) submitted before provisioning cutoff, OR
-	// - Resumed jobs stuck in provisioning (startedAt is set) interrupted before provisioning cutoff
+	// - Resumed jobs stuck in provisioning (startedAt is set, submitted before provisioning cutoff), OR
+	// - Pending jobs that were never provisioned (submitted before provisioning cutoff)
 	const overdueJobs = await db
 		.select()
 		.from(jobs)
 		.where(
-			and(
-				inArray(jobs.status, [...ACTIVE_STATUSES] as [string, ...string[]]),
-				or(
-					lt(jobs.startedAt, cutoff),
-					and(isNull(jobs.startedAt), lt(jobs.submittedAt, provisioningCutoff)),
-					and(eq(jobs.status, "provisioning"), lt(jobs.interruptedAt, provisioningCutoff)),
+			or(
+				and(
+					inArray(jobs.status, [...ACTIVE_STATUSES] as [string, ...string[]]),
+					or(
+						lt(jobs.startedAt, cutoff),
+						and(isNull(jobs.startedAt), lt(jobs.submittedAt, provisioningCutoff)),
+						and(eq(jobs.status, "provisioning"), lt(jobs.submittedAt, provisioningCutoff)),
+					),
 				),
+				and(eq(jobs.status, "pending"), lt(jobs.submittedAt, provisioningCutoff)),
 			),
 		);
 
@@ -61,12 +65,14 @@ export async function GET(request: Request) {
 
 	for (const job of overdueJobs) {
 		try {
-			// Skip if transition to timed_out is not valid (e.g., finalizing can only go to completed/failed/stopped)
-			if (!isValidTransition(job.status as JobStatus, "timed_out")) {
+			// Stale pending jobs should be marked as failed, not timed_out
+			const targetStatus: JobStatus = job.status === "pending" ? "failed" : "timed_out";
+
+			if (!isValidTransition(job.status as JobStatus, targetStatus)) {
 				results.push({
 					jobId: job.id,
 					stopped: false,
-					error: `Cannot transition from ${job.status} to timed_out`,
+					error: `Cannot transition from ${job.status} to ${targetStatus}`,
 				});
 				continue;
 			}
@@ -75,7 +81,7 @@ export async function GET(request: Request) {
 
 			// Calculate cost
 			const updateFields: Record<string, unknown> = {
-				status: "timed_out" as JobStatus,
+				status: targetStatus,
 				finishedAt: now,
 			};
 
@@ -120,7 +126,7 @@ export async function GET(request: Request) {
 							finishedAt: null,
 							costFlops: job.costFlops,
 						})
-						.where(and(eq(jobs.id, job.id), eq(jobs.status, "timed_out" as JobStatus)));
+						.where(and(eq(jobs.id, job.id), eq(jobs.status, targetStatus)));
 					results.push({ jobId: job.id, stopped: false, error: `ECS stop failed: ${err}` });
 					continue;
 				}
