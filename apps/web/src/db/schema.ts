@@ -32,4 +32,5 @@ export const jobs = pgTable("jobs", {
 	// Spot resume
 	resumeCount: integer("resume_count").default(0),
 	lastCheckpointCommit: text("last_checkpoint_commit"),
+	interruptedAt: timestamp("interrupted_at"),
 });

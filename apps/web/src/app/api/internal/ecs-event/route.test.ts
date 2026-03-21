@@ -23,6 +23,8 @@ let selectResult: unknown[] = [];
 
 const mockSelectWhere = vi.fn().mockImplementation(() => selectResult);
 
+const mockReturning = vi.fn();
+
 vi.mock("../../../../db", () => ({
 	getDb: () => ({
 		update: (...args: unknown[]) => {
@@ -31,7 +33,12 @@ vi.mock("../../../../db", () => ({
 				set: (...setArgs: unknown[]) => {
 					mockSet(...setArgs);
 					return {
-						where: (...whereArgs: unknown[]) => mockUpdateWhere(...whereArgs),
+						where: (...whereArgs: unknown[]) => {
+							mockUpdateWhere(...whereArgs);
+							return {
+								returning: (...retArgs: unknown[]) => mockReturning(...retArgs),
+							};
+						},
 					};
 				},
 			};
@@ -86,6 +93,7 @@ function makeJob(overrides: Record<string, unknown> = {}) {
 		finishedAt: null,
 		resumeCount: 0,
 		lastCheckpointCommit: null,
+		interruptedAt: null,
 		...overrides,
 	};
 }
@@ -116,6 +124,7 @@ describe("POST /api/internal/ecs-event", () => {
 		mockUpdate.mockReset();
 		mockSet.mockReset();
 		mockUpdateWhere.mockReset().mockResolvedValue(undefined);
+		mockReturning.mockReset().mockResolvedValue([{ id: "db_V1StGXR8_Z5jdHi6B-myT" }]);
 		mockSelect.mockReset();
 		mockFrom.mockReset();
 		mockSelectWhere.mockReset().mockImplementation(() => selectResult);

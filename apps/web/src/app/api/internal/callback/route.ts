@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod/v4";
 import { getDb } from "../../../../db";
@@ -21,6 +21,7 @@ const callbackSchema = z.object({
 	status: z.enum(["cloning", "executing", "finalizing", "completed", "failed", "interrupted"]),
 	prUrl: z.string().url().optional(),
 	lastCheckpointCommit: z.string().optional(),
+	ecsTaskArn: z.string().optional(),
 });
 
 export type CallbackInput = z.infer<typeof callbackSchema>;
@@ -69,6 +70,45 @@ export async function POST(request: NextRequest) {
 		return NextResponse.json({ error: "Job not found" }, { status: 404 });
 	}
 
+	// Reject stale callbacks from old ECS tasks. When the runner provides its
+	// ecsTaskArn, compare it to the stored ARN — a mismatch means the callback
+	// is from a previous task attempt and must be discarded to prevent
+	// double-provisioning and stale state overwrites.
+	if (input.ecsTaskArn && job.ecsTaskArn && input.ecsTaskArn !== job.ecsTaskArn) {
+		return NextResponse.json(
+			{ error: `Stale callback: task ARN mismatch for job ${job.id}` },
+			{ status: 409 },
+		);
+	}
+
+	// Handle SIGTERM callbacks for jobs already in a terminal state (stopped/timed_out).
+	// The stop/timeout endpoints write the terminal status before sending SIGTERM to allow
+	// the runner's SIGTERM handler to persist its last checkpoint and PR URL.
+	// This check MUST run before the no-ARN stale guard below, because a legitimate
+	// SIGTERM callback from a resumed job (resumeCount > 0) would otherwise be rejected.
+	const terminalSigtermCallback =
+		(job.status === "stopped" || job.status === "timed_out") && input.status === "interrupted";
+
+	// Reject stale "interrupted" callbacks from previous task attempts after a resume.
+	// After resume, the new task's interruptions are handled via ECS events (which match
+	// by ARN), so the runner callback arrives on the alreadyInterrupted path below.
+	// A callback reporting "interrupted" without ecsTaskArn on a resumed job is from the
+	// old dead container and must be rejected to prevent double-provisioning.
+	// Also covers the window where resumeJob has CAS'd to "provisioning" but hasn't yet
+	// incremented resumeCount — a no-ARN "interrupted" callback during provisioning is
+	// always stale (a real interruption would come via ECS event with ARN match).
+	if (
+		input.status === "interrupted" &&
+		!terminalSigtermCallback &&
+		!input.ecsTaskArn &&
+		((job.resumeCount ?? 0) > 0 || job.status === "provisioning")
+	) {
+		return NextResponse.json(
+			{ error: `Stale callback: no task identity on resumed job ${job.id}` },
+			{ status: 409 },
+		);
+	}
+
 	// Handle race condition: if ECS event already marked the job as interrupted
 	// and the runner callback also reports interrupted, skip transition validation
 	// and proceed directly to the resume flow.
@@ -76,6 +116,7 @@ export async function POST(request: NextRequest) {
 
 	if (
 		!alreadyInterrupted &&
+		!terminalSigtermCallback &&
 		!isValidTransition(job.status as Parameters<typeof isValidTransition>[0], input.status)
 	) {
 		return NextResponse.json(
@@ -94,6 +135,11 @@ export async function POST(request: NextRequest) {
 	// Set startedAt on first transition to an active status (cloning/executing/finalizing)
 	if (!job.startedAt && isActiveStatus(input.status)) {
 		updateFields.startedAt = now;
+	}
+
+	// Record when the job was interrupted (used by cron for 3-min resume timeout)
+	if (input.status === "interrupted") {
+		updateFields.interruptedAt = now;
 	}
 
 	if (input.prUrl) {
@@ -121,9 +167,40 @@ export async function POST(request: NextRequest) {
 		updateFields.encryptedSecrets = null;
 	}
 
-	// Skip DB update if job is already interrupted (ECS event handled it)
+	// For SIGTERM callbacks on terminal jobs (stopped/timed_out), only persist
+	// the runner's last checkpoint and PR URL without changing the status.
+	// This preserves the review surface per the spec.
+	if (terminalSigtermCallback) {
+		const sigtermFields: Record<string, unknown> = {};
+		if (input.prUrl) sigtermFields.prUrl = input.prUrl;
+		if (input.lastCheckpointCommit) sigtermFields.lastCheckpointCommit = input.lastCheckpointCommit;
+		if (Object.keys(sigtermFields).length > 0) {
+			await db.update(jobs).set(sigtermFields).where(eq(jobs.id, input.jobId));
+		}
+		return NextResponse.json({ ok: true });
+	}
+
+	// Skip DB update if job is already interrupted (ECS event handled it),
+	// but still persist lastCheckpointCommit so it's not lost if resumeJob fails.
+	// Use CAS on status to prevent overwriting concurrent terminal transitions
+	// (e.g. admin stop or cron timeout that landed between our read and write).
 	if (!alreadyInterrupted) {
-		await db.update(jobs).set(updateFields).where(eq(jobs.id, input.jobId));
+		const updated = await db
+			.update(jobs)
+			.set(updateFields)
+			.where(and(eq(jobs.id, input.jobId), eq(jobs.status, job.status)))
+			.returning({ id: jobs.id });
+		if (updated.length === 0) {
+			return NextResponse.json(
+				{ error: `Job ${job.id} status changed concurrently (expected: ${job.status})` },
+				{ status: 409 },
+			);
+		}
+	} else if (input.lastCheckpointCommit) {
+		await db
+			.update(jobs)
+			.set({ lastCheckpointCommit: input.lastCheckpointCommit })
+			.where(eq(jobs.id, input.jobId));
 	}
 
 	// Settle MPP payment after DB update succeeds (non-blocking — errors logged but not fatal)

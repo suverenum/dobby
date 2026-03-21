@@ -60,6 +60,8 @@ export function LogViewer({ jobId, isTerminal }: LogViewerProps) {
 
 						if (data === "[RECONNECT]") {
 							// Server hit streaming timeout; reconnect to continue
+							// Clear existing logs to avoid duplication since server replays from head
+							setLogs([]);
 							reader.cancel();
 							connect();
 							return;

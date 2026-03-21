@@ -9,10 +9,11 @@ import {
 	generateJobId,
 	hasCapacity,
 	provisionTask,
+	stopTask,
 } from "../../../../domain/jobs";
 import { getEnv } from "../../../../lib/env";
 import { encrypt } from "../../../../lib/kms";
-import { MppError, validatePreauthorization } from "../../../../lib/mpp";
+import { MppError, settlePayment, validatePreauthorization } from "../../../../lib/mpp";
 import { sendNotification } from "../../../../lib/telegram";
 
 const GITHUB_PR_URL_RE = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/\d+$/;
@@ -157,6 +158,7 @@ export async function POST(request: NextRequest) {
 	});
 
 	// Provision Fargate task
+	let provisionResult: Awaited<ReturnType<typeof provisionTask>> | undefined;
 	try {
 		const decryptedSecrets: { gitToken: string; secrets?: Record<string, string> } = {
 			gitToken: input.gitToken,
@@ -175,18 +177,18 @@ export async function POST(request: NextRequest) {
 			lastCheckpointCommit: null,
 		} as Parameters<typeof provisionTask>[0];
 
-		const result = await provisionTask(jobForProvision, decryptedSecrets);
+		provisionResult = await provisionTask(jobForProvision, decryptedSecrets);
 
 		// Derive log stream name from task ARN (awslogs format: prefix/container-name/task-id)
-		const taskId = result.taskArn.split("/").pop();
+		const taskId = provisionResult.taskArn.split("/").pop();
 		const logStreamName = taskId ? `dobby-runner/dobby-runner/${taskId}` : null;
 
 		await db
 			.update(jobs)
 			.set({
 				status: "provisioning",
-				ecsTaskArn: result.taskArn,
-				ecsClusterArn: result.clusterArn,
+				ecsTaskArn: provisionResult.taskArn,
+				ecsClusterArn: provisionResult.clusterArn,
 				...(logStreamName && { logStreamName }),
 			})
 			.where(eq(jobs.id, jobId));
@@ -210,6 +212,23 @@ export async function POST(request: NextRequest) {
 
 		return NextResponse.json({ id: jobId, status: "provisioning" }, { status: 201 });
 	} catch (error) {
+		// Stop orphaned ECS task if it was provisioned but the DB write failed
+		if (provisionResult) {
+			const orphanedJob = {
+				id: jobId,
+				ecsTaskArn: provisionResult.taskArn,
+				ecsClusterArn: provisionResult.clusterArn,
+			} as Parameters<typeof stopTask>[0];
+			try {
+				await stopTask(orphanedJob);
+			} catch (stopErr) {
+				console.error(
+					`CRITICAL: Failed to stop orphaned ECS task ${provisionResult.taskArn} for job ${jobId} — task may be stranded:`,
+					stopErr,
+				);
+			}
+		}
+
 		// Mark job as failed if provisioning fails
 		await db
 			.update(jobs)
@@ -220,6 +239,13 @@ export async function POST(request: NextRequest) {
 				encryptedSecrets: null,
 			})
 			.where(eq(jobs.id, jobId));
+
+		// Settle MPP payment with zero cost to release preauthorization
+		if (mppResult.channelId) {
+			settlePayment(mppResult.channelId, 0, maxBudget).catch((settleErr) => {
+				console.error(`Failed to settle MPP payment for failed job ${jobId}:`, settleErr);
+			});
+		}
 
 		console.error(`Failed to provision ECS task for job ${jobId}:`, error);
 		return NextResponse.json(

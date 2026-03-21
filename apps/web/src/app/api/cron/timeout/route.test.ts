@@ -62,16 +62,24 @@ function makeJob(overrides: Record<string, unknown> = {}) {
 		finishedAt: null,
 		resumeCount: 0,
 		lastCheckpointCommit: null,
+		interruptedAt: null,
 		...overrides,
 	};
 }
+
+const mockReturning = vi.fn();
 
 function setupDbChain(overdueJobs: ReturnType<typeof makeJob>[]) {
 	mockWhere.mockResolvedValue(overdueJobs);
 	mockFrom.mockReturnValue({ where: mockWhere });
 	mockSelect.mockReturnValue({ from: mockFrom });
 
-	mockUpdateWhere.mockResolvedValue(undefined);
+	mockReturning.mockResolvedValue([{ id: "db_testjob123456789012" }]);
+	mockUpdateWhere.mockImplementation(() => {
+		const p = Promise.resolve(undefined);
+		Object.assign(p, { returning: (...retArgs: unknown[]) => mockReturning(...retArgs) });
+		return p;
+	});
 	mockSet.mockReturnValue({ where: mockUpdateWhere });
 	mockUpdate.mockReturnValue({ set: mockSet });
 }
@@ -172,14 +180,19 @@ describe("GET /api/cron/timeout", () => {
 		expect(mockStopTask).toHaveBeenCalledOnce();
 		expect(mockStopTask.mock.calls[0]![0].id).toBe(job.id);
 
-		// Verify job was updated
+		// Verify job was updated: first CAS claims terminal status
 		expect(mockUpdate).toHaveBeenCalled();
 		expect(mockSet).toHaveBeenCalled();
 		const updateArg = mockSet.mock.calls[0]![0];
 		expect(updateArg.status).toBe("timed_out");
 		expect(updateArg.finishedAt).toBeInstanceOf(Date);
-		expect(updateArg.encryptedGitCredentials).toBe("");
-		expect(updateArg.encryptedSecrets).toBeNull();
+		// Secrets are cleared in a separate update after task stop is confirmed
+		expect(mockSet).toHaveBeenCalledWith(
+			expect.objectContaining({
+				encryptedGitCredentials: "",
+				encryptedSecrets: null,
+			}),
+		);
 	});
 
 	it("calculates cost for timed-out jobs with startedAt", async () => {
@@ -241,11 +254,12 @@ describe("GET /api/cron/timeout", () => {
 		expect(updateArg.status).toBe("timed_out");
 	});
 
-	it("handles stopTask errors gracefully and reports failure", async () => {
+	it("reverts terminal status if stopTask fails transiently", async () => {
 		setRequiredEnv();
 		const job = makeJob();
 		setupDbChain([job]);
 		mockStopTask.mockRejectedValue(new Error("ECS service unavailable"));
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
 		const { GET } = await import("./route");
 
@@ -253,12 +267,19 @@ describe("GET /api/cron/timeout", () => {
 		const response = await GET(request);
 
 		const body = await response.json();
+		// stopTask failed, so status is reverted — job is NOT timed out
 		expect(body.timedOut).toBe(0);
 		expect(body.failed).toBe(1);
-		expect(body.results[0].error).toBe("ECS service unavailable");
+		expect(body.results[0].error).toContain("ECS stop failed");
+		// Second set call reverts the terminal status
+		expect(mockSet).toHaveBeenCalledWith(
+			expect.objectContaining({ status: "executing", finishedAt: null }),
+		);
+		expect(consoleSpy).toHaveBeenCalled();
+		consoleSpy.mockRestore();
 	});
 
-	it("clears encrypted secrets on timeout", async () => {
+	it("clears encrypted secrets on timeout after task stop confirmed", async () => {
 		setRequiredEnv();
 		const job = makeJob();
 		setupDbChain([job]);
@@ -269,8 +290,12 @@ describe("GET /api/cron/timeout", () => {
 		const request = makeAuthenticatedRequest();
 		await GET(request);
 
-		const updateArg = mockSet.mock.calls[0]![0];
-		expect(updateArg.encryptedGitCredentials).toBe("");
-		expect(updateArg.encryptedSecrets).toBeNull();
+		// Secrets are cleared in a separate update after stopTask succeeds
+		expect(mockSet).toHaveBeenCalledWith(
+			expect.objectContaining({
+				encryptedGitCredentials: "",
+				encryptedSecrets: null,
+			}),
+		);
 	});
 });

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod/v4";
 import { getDb } from "../../../../db";
@@ -77,8 +77,22 @@ export async function POST(request: NextRequest) {
 	}
 
 	// Mark job as interrupted — resume is handled by the runner callback endpoint
-	// which has the checkpoint commit SHA from the runner's SIGTERM handler
-	await db.update(jobs).set({ status: "interrupted" }).where(eq(jobs.id, job.id));
+	// which has the checkpoint commit SHA from the runner's SIGTERM handler.
+	// Use CAS on status to prevent overwriting a concurrent terminal transition
+	// (e.g. admin stop or cron timeout that landed between our read and write).
+	const updated = await db
+		.update(jobs)
+		.set({ status: "interrupted", interruptedAt: new Date() })
+		.where(and(eq(jobs.id, job.id), eq(jobs.status, job.status)))
+		.returning({ id: jobs.id });
+
+	if (updated.length === 0) {
+		return NextResponse.json({
+			ok: true,
+			action: "ignored",
+			reason: `job ${job.id} status changed concurrently (expected: ${job.status})`,
+		});
+	}
 
 	return NextResponse.json({ ok: true, action: "marked_interrupted", jobId: job.id });
 }

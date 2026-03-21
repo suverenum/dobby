@@ -75,6 +75,7 @@ function makeJob(overrides: Record<string, unknown> = {}) {
 		finishedAt: null,
 		resumeCount: 0,
 		lastCheckpointCommit: null,
+		interruptedAt: null,
 		...overrides,
 	};
 }

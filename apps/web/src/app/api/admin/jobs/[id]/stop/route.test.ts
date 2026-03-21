@@ -11,6 +11,7 @@ let mockJobRows: Array<Record<string, unknown>> = [];
 const mockUpdate = vi.fn();
 const mockUpdateSet = vi.fn();
 const mockUpdateWhere = vi.fn();
+const mockReturning = vi.fn();
 
 vi.mock("../../../../../../db", () => ({
 	getDb: () => ({
@@ -27,7 +28,9 @@ vi.mock("../../../../../../db", () => ({
 					return {
 						where: (...wArgs: unknown[]) => {
 							mockUpdateWhere(...wArgs);
-							return Promise.resolve();
+							return {
+								returning: (...retArgs: unknown[]) => mockReturning(...retArgs),
+							};
 						},
 					};
 				},
@@ -100,6 +103,7 @@ function makeJob(overrides: Record<string, unknown> = {}) {
 		finishedAt: null,
 		resumeCount: 0,
 		lastCheckpointCommit: null,
+		interruptedAt: null,
 		...overrides,
 	};
 }
@@ -111,6 +115,7 @@ describe("POST /api/admin/jobs/[id]/stop", () => {
 		mockUpdate.mockClear();
 		mockUpdateSet.mockClear();
 		mockUpdateWhere.mockClear();
+		mockReturning.mockClear().mockResolvedValue([{ id: "db_test1" }]);
 		mockSettlePayment.mockClear();
 		mockSendNotification.mockClear();
 		mockCalculateJobCost.mockClear().mockReturnValue(50);
@@ -165,9 +170,11 @@ describe("POST /api/admin/jobs/[id]/stop", () => {
 		expect(data.success).toBe(true);
 		expect(data.status).toBe("stopped");
 		expect(mockStopTask).toHaveBeenCalled();
+		// First CAS update claims terminal status (without clearing secrets)
+		expect(mockUpdateSet).toHaveBeenCalledWith(expect.objectContaining({ status: "stopped" }));
+		// Second update clears secrets after task is confirmed stopped
 		expect(mockUpdateSet).toHaveBeenCalledWith(
 			expect.objectContaining({
-				status: "stopped",
 				encryptedGitCredentials: "",
 				encryptedSecrets: null,
 			}),
@@ -184,9 +191,11 @@ describe("POST /api/admin/jobs/[id]/stop", () => {
 		});
 
 		expect(mockCalculateJobCost).toHaveBeenCalled();
+		// Cost is set in the initial CAS update
+		expect(mockUpdateSet).toHaveBeenCalledWith(expect.objectContaining({ costFlops: "50" }));
+		// Secrets are cleared in a separate update after task stop is confirmed
 		expect(mockUpdateSet).toHaveBeenCalledWith(
 			expect.objectContaining({
-				costFlops: "50",
 				encryptedGitCredentials: "",
 				encryptedSecrets: null,
 			}),
@@ -220,17 +229,25 @@ describe("POST /api/admin/jobs/[id]/stop", () => {
 		);
 	});
 
-	it("still updates status if ECS stopTask fails", async () => {
+	it("reverts status and returns 502 if ECS stopTask fails", async () => {
 		mockValidateAdminSession.mockResolvedValue(true);
 		mockStopTask.mockRejectedValue(new Error("ECS error"));
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 		mockJobRows = [makeJob({ status: "executing" })];
 
 		const res = await POST(makeRequest() as never, {
 			params: Promise.resolve({ id: "db_test1" }),
 		});
 
-		expect(res.status).toBe(200);
+		expect(res.status).toBe(502);
+		const data = await res.json();
+		expect(data.error).toContain("Failed to stop ECS task");
+		// First call sets terminal status, second call reverts it
 		expect(mockUpdateSet).toHaveBeenCalledWith(expect.objectContaining({ status: "stopped" }));
+		expect(mockUpdateSet).toHaveBeenCalledWith(
+			expect.objectContaining({ status: "executing", finishedAt: null }),
+		);
+		consoleSpy.mockRestore();
 	});
 
 	it("skips ECS stop when no task ARN", async () => {

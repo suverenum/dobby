@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
 import { getDb } from "../../../../../../db";
 import { jobs } from "../../../../../../db/schema";
@@ -42,23 +42,11 @@ export async function POST(
 		);
 	}
 
-	// Stop the ECS task if it has one
-	if (job.ecsTaskArn) {
-		try {
-			await stopTask(job);
-		} catch (err) {
-			// Log but don't fail — the task may already be stopped
-			console.error(`Failed to stop ECS task for job ${id}:`, err);
-		}
-	}
-
 	const env = getEnv();
 	const now = new Date();
 	const updateFields: Record<string, unknown> = {
 		status: "stopped",
 		finishedAt: now,
-		encryptedGitCredentials: "",
-		encryptedSecrets: null,
 	};
 
 	// Calculate cost if job was started
@@ -69,9 +57,58 @@ export async function POST(
 		updateFields.costFlops = cost.toString();
 	}
 
-	await db.update(jobs).set(updateFields).where(eq(jobs.id, id));
+	// CAS update to claim the terminal status — secrets are NOT cleared yet
+	// so we can revert if stopTask() fails transiently.
+	const updated = await db
+		.update(jobs)
+		.set(updateFields)
+		.where(and(eq(jobs.id, id), eq(jobs.status, status)))
+		.returning({ id: jobs.id });
 
-	// Settle MPP payment after DB update succeeds (non-blocking)
+	if (updated.length === 0) {
+		return NextResponse.json(
+			{ error: `Job status changed concurrently (expected: ${status})` },
+			{ status: 409 },
+		);
+	}
+
+	// Stop the ECS task after DB update succeeds.
+	// If stopTask() fails transiently, revert the terminal status so the
+	// cron timeout handler can catch and retry stopping it.
+	if (job.ecsTaskArn) {
+		try {
+			await stopTask(job);
+		} catch (err) {
+			console.error(`Failed to stop ECS task for job ${id}:`, err);
+			// Revert terminal status so cron/admin can retry
+			await db
+				.update(jobs)
+				.set({
+					status,
+					finishedAt: null,
+					costFlops: job.costFlops,
+				})
+				.where(and(eq(jobs.id, id), eq(jobs.status, "stopped" as JobStatus)));
+			return NextResponse.json(
+				{ error: `Failed to stop ECS task: ${err instanceof Error ? err.message : err}` },
+				{ status: 502 },
+			);
+		}
+	}
+
+	// Task is confirmed stopped — now clear secrets and settle payment.
+	// Both operations must be attempted even if one fails, to avoid
+	// stranding secrets or leaving payments unsettled.
+	try {
+		await db
+			.update(jobs)
+			.set({ encryptedGitCredentials: "", encryptedSecrets: null })
+			.where(eq(jobs.id, id));
+	} catch (secretErr) {
+		console.error(`Failed to clear secrets for stopped job ${id}:`, secretErr);
+	}
+
+	// Settle MPP payment after task is confirmed stopped (non-blocking)
 	if (job.mppChannelId) {
 		const authorizedFlops = Number(job.authorizedFlops) || 0;
 		settlePayment(job.mppChannelId, cost, authorizedFlops).catch((error) => {

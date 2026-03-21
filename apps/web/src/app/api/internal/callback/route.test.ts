@@ -6,10 +6,12 @@ vi.mock("../../../../lib/kms", () => ({
 	decrypt: (...args: unknown[]) => mockDecrypt(...args),
 }));
 
-// Mock ECS provisionTask
+// Mock ECS provisionTask and stopTask
 const mockProvisionTask = vi.fn();
+const mockStopTask = vi.fn();
 vi.mock("../../../../domain/jobs/ecs", () => ({
 	provisionTask: (...args: unknown[]) => mockProvisionTask(...args),
+	stopTask: (...args: unknown[]) => mockStopTask(...args),
 }));
 
 // Mock MPP settlePayment
@@ -29,6 +31,8 @@ let selectResult: unknown[] = [];
 
 const mockSelectWhere = vi.fn().mockImplementation(() => selectResult);
 
+const mockReturning = vi.fn();
+
 vi.mock("../../../../db", () => ({
 	getDb: () => ({
 		update: (...args: unknown[]) => {
@@ -37,7 +41,15 @@ vi.mock("../../../../db", () => ({
 				set: (...setArgs: unknown[]) => {
 					mockSet(...setArgs);
 					return {
-						where: (...whereArgs: unknown[]) => mockUpdateWhere(...whereArgs),
+						where: (...whereArgs: unknown[]) => {
+							const whereResult = mockUpdateWhere(...whereArgs);
+							// Return a thenable that also supports .returning() for CAS queries
+							const obj = Promise.resolve(whereResult);
+							Object.assign(obj, {
+								returning: (...retArgs: unknown[]) => mockReturning(...retArgs),
+							});
+							return obj;
+						},
 					};
 				},
 			};
@@ -89,6 +101,7 @@ function makeJob(overrides: Record<string, unknown> = {}) {
 		finishedAt: null,
 		resumeCount: 0,
 		lastCheckpointCommit: null,
+		interruptedAt: null,
 		...overrides,
 	};
 }
@@ -108,6 +121,7 @@ describe("POST /api/internal/callback", () => {
 		mockUpdate.mockReset();
 		mockSet.mockReset();
 		mockUpdateWhere.mockReset().mockResolvedValue(undefined);
+		mockReturning.mockReset().mockResolvedValue([{ id: "db_V1StGXR8_Z5jdHi6B-myT" }]);
 		mockSelect.mockReset();
 		mockFrom.mockReset();
 		mockSelectWhere.mockReset().mockImplementation(() => selectResult);
@@ -472,12 +486,12 @@ describe("POST /api/internal/callback", () => {
 		await POST(req as any);
 
 		// First set call: initial status update to interrupted
-		// Second set call: resume update to provisioning with resumeCount increment
-		// Third set call: new ECS task ARN
+		// Second set call: CAS claim (interrupted -> provisioning) in resumeJob
+		// Third set call: final update with resumeCount + ECS ARN
 		expect(mockSet).toHaveBeenCalledTimes(3);
 
-		const resumeUpdate = mockSet.mock.calls[1]![0] as Record<string, unknown>;
-		expect(resumeUpdate.status).toBe("provisioning");
+		const claimUpdate = mockSet.mock.calls[1]![0] as Record<string, unknown>;
+		expect(claimUpdate.status).toBe("provisioning");
 	});
 
 	it("stores new ECS task ARN after resume", async () => {
@@ -495,7 +509,7 @@ describe("POST /api/internal/callback", () => {
 		// biome-ignore lint/suspicious/noExplicitAny: test helper
 		await POST(req as any);
 
-		// Third set call: ECS ARN update
+		// ECS ARN is in the third set call (after CAS claim and provision)
 		const ecsUpdate = mockSet.mock.calls[2]![0] as Record<string, unknown>;
 		expect(ecsUpdate.ecsTaskArn).toBe("arn:aws:ecs:us-east-1:123:task/cluster/new-task-id");
 		expect(ecsUpdate.ecsClusterArn).toBe("arn:aws:ecs:us-east-1:123:cluster/dobby");
@@ -556,6 +570,174 @@ describe("POST /api/internal/callback", () => {
 		// Allow async settlement error to propagate
 		await new Promise((resolve) => setTimeout(resolve, 10));
 		consoleSpy.mockRestore();
+	});
+
+	it("rejects stale callback when ecsTaskArn does not match", async () => {
+		selectResult = [
+			makeJob({ status: "cloning", ecsTaskArn: "arn:aws:ecs:us-east-1:123:task/cluster/new-task" }),
+		];
+		const { POST } = await import("./route");
+		const req = createRequest({
+			jobId: "db_V1StGXR8_Z5jdHi6B-myT",
+			status: "interrupted",
+			ecsTaskArn: "arn:aws:ecs:us-east-1:123:task/cluster/old-task",
+		});
+		// biome-ignore lint/suspicious/noExplicitAny: test helper
+		const res = await POST(req as any);
+
+		expect(res.status).toBe(409);
+		const json = await res.json();
+		expect(json.error).toContain("Stale callback");
+		expect(mockProvisionTask).not.toHaveBeenCalled();
+	});
+
+	it("accepts callback when ecsTaskArn matches current task", async () => {
+		const taskArn = "arn:aws:ecs:us-east-1:123:task/cluster/current-task";
+		selectResult = [makeJob({ status: "executing", ecsTaskArn: taskArn })];
+		mockDecrypt.mockResolvedValueOnce("decrypted-git-token");
+		mockProvisionTask.mockResolvedValueOnce({
+			taskArn: "arn:aws:ecs:us-east-1:123:task/cluster/resumed-task",
+			clusterArn: "arn:aws:ecs:us-east-1:123:cluster/dobby",
+		});
+
+		const { POST } = await import("./route");
+		const req = createRequest({
+			jobId: "db_V1StGXR8_Z5jdHi6B-myT",
+			status: "interrupted",
+			ecsTaskArn: taskArn,
+			lastCheckpointCommit: "abc123",
+		});
+		// biome-ignore lint/suspicious/noExplicitAny: test helper
+		const res = await POST(req as any);
+
+		expect(res.status).toBe(200);
+		expect(mockProvisionTask).toHaveBeenCalledOnce();
+	});
+
+	it("allows provisioning -> interrupted when ecsTaskArn matches (new task spot-interrupted)", async () => {
+		const taskArn = "arn:aws:ecs:us-east-1:123:task/cluster/new-task";
+		selectResult = [makeJob({ status: "provisioning", ecsTaskArn: taskArn, startedAt: null })];
+		mockDecrypt.mockResolvedValueOnce("decrypted-git-token");
+		mockProvisionTask.mockResolvedValueOnce({
+			taskArn: "arn:aws:ecs:us-east-1:123:task/cluster/resumed-task",
+			clusterArn: "arn:aws:ecs:us-east-1:123:cluster/dobby",
+		});
+
+		const { POST } = await import("./route");
+		const req = createRequest({
+			jobId: "db_V1StGXR8_Z5jdHi6B-myT",
+			status: "interrupted",
+			ecsTaskArn: taskArn,
+		});
+		// biome-ignore lint/suspicious/noExplicitAny: test helper
+		const res = await POST(req as any);
+
+		expect(res.status).toBe(200);
+		// Should not be rejected — this is the current task, not a stale one
+		expect(mockProvisionTask).toHaveBeenCalledOnce();
+	});
+
+	it("rejects stale interrupted callback without ecsTaskArn on resumed job", async () => {
+		selectResult = [makeJob({ status: "provisioning", resumeCount: 1, startedAt: null })];
+		const { POST } = await import("./route");
+		const req = createRequest({
+			jobId: "db_V1StGXR8_Z5jdHi6B-myT",
+			status: "interrupted",
+			lastCheckpointCommit: "abc123",
+		});
+		// biome-ignore lint/suspicious/noExplicitAny: test helper
+		const res = await POST(req as any);
+
+		expect(res.status).toBe(409);
+		const json = await res.json();
+		expect(json.error).toContain("Stale callback");
+		expect(json.error).toContain("no task identity");
+		expect(mockProvisionTask).not.toHaveBeenCalled();
+	});
+
+	it("accepts interrupted callback with matching ecsTaskArn on resumed job", async () => {
+		const taskArn = "arn:aws:ecs:us-east-1:123:task/cluster/current-task";
+		selectResult = [makeJob({ status: "executing", resumeCount: 1, ecsTaskArn: taskArn })];
+		mockDecrypt.mockResolvedValueOnce("decrypted-git-token");
+		mockProvisionTask.mockResolvedValueOnce({
+			taskArn: "arn:aws:ecs:us-east-1:123:task/cluster/new-task",
+			clusterArn: "arn:aws:ecs:us-east-1:123:cluster/dobby",
+		});
+
+		const { POST } = await import("./route");
+		const req = createRequest({
+			jobId: "db_V1StGXR8_Z5jdHi6B-myT",
+			status: "interrupted",
+			ecsTaskArn: taskArn,
+			lastCheckpointCommit: "abc123",
+		});
+		// biome-ignore lint/suspicious/noExplicitAny: test helper
+		const res = await POST(req as any);
+
+		expect(res.status).toBe(200);
+		expect(mockProvisionTask).toHaveBeenCalledOnce();
+	});
+
+	it("persists prUrl and checkpoint from SIGTERM callback on stopped job", async () => {
+		selectResult = [makeJob({ status: "stopped", finishedAt: new Date() })];
+		const { POST } = await import("./route");
+		const req = createRequest({
+			jobId: "db_V1StGXR8_Z5jdHi6B-myT",
+			status: "interrupted",
+			prUrl: "https://github.com/org/repo/pull/99",
+			lastCheckpointCommit: "deadbeef",
+		});
+		// biome-ignore lint/suspicious/noExplicitAny: test helper
+		const res = await POST(req as any);
+
+		expect(res.status).toBe(200);
+		const json = await res.json();
+		expect(json.ok).toBe(true);
+
+		// Should persist prUrl and checkpoint without changing status
+		expect(mockSet).toHaveBeenCalledOnce();
+		const updateData = mockSet.mock.calls[0]![0] as Record<string, unknown>;
+		expect(updateData.prUrl).toBe("https://github.com/org/repo/pull/99");
+		expect(updateData.lastCheckpointCommit).toBe("deadbeef");
+		expect(updateData.status).toBeUndefined();
+		// Should NOT trigger resume flow
+		expect(mockProvisionTask).not.toHaveBeenCalled();
+	});
+
+	it("persists prUrl and checkpoint from SIGTERM callback on timed_out job", async () => {
+		selectResult = [makeJob({ status: "timed_out", finishedAt: new Date() })];
+		const { POST } = await import("./route");
+		const req = createRequest({
+			jobId: "db_V1StGXR8_Z5jdHi6B-myT",
+			status: "interrupted",
+			prUrl: "https://github.com/org/repo/pull/42",
+			lastCheckpointCommit: "abc123",
+		});
+		// biome-ignore lint/suspicious/noExplicitAny: test helper
+		const res = await POST(req as any);
+
+		expect(res.status).toBe(200);
+		expect(mockSet).toHaveBeenCalledOnce();
+		const updateData = mockSet.mock.calls[0]![0] as Record<string, unknown>;
+		expect(updateData.prUrl).toBe("https://github.com/org/repo/pull/42");
+		expect(updateData.lastCheckpointCommit).toBe("abc123");
+		expect(mockProvisionTask).not.toHaveBeenCalled();
+	});
+
+	it("returns ok without DB update for SIGTERM callback with no data to persist", async () => {
+		selectResult = [makeJob({ status: "stopped", finishedAt: new Date() })];
+		const { POST } = await import("./route");
+		const req = createRequest({
+			jobId: "db_V1StGXR8_Z5jdHi6B-myT",
+			status: "interrupted",
+		});
+		// biome-ignore lint/suspicious/noExplicitAny: test helper
+		const res = await POST(req as any);
+
+		expect(res.status).toBe(200);
+		// No fields to persist, so no DB update
+		expect(mockSet).not.toHaveBeenCalled();
+		expect(mockProvisionTask).not.toHaveBeenCalled();
 	});
 
 	it("does not clear secrets on interrupted status", async () => {
