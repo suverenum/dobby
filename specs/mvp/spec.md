@@ -481,16 +481,16 @@ Provided as CDK or Terraform in the repo. Creates:
 **Goal:** Implement the internal callback endpoint that runners use to report status.
 
 **Steps:**
-1. Create `apps/web/src/app/api/internal/callback/route.ts` with POST handler
-2. Authenticate via `DOBBY_CALLBACK_SECRET` (shared secret in Authorization header)
-3. Accept: `jobId`, `status` (completed/failed/interrupted), `prUrl` (optional), `lastCheckpointCommit` (optional)
-4. Update job row: status, prUrl, finishedAt, lastCheckpointCommit
-5. On terminal status (completed/failed/stopped/timed_out): delete encrypted secrets and git credentials from DB
-6. Trigger Telegram notification (Task 13)
-7. On `interrupted` status: trigger resume flow (decrypt secrets, provision new task with checkpoint commit, increment resumeCount)
-8. Write integration tests: status updates, secret cleanup on terminal status, resume on interruption
+- [x] Create `apps/web/src/app/api/internal/callback/route.ts` with POST handler
+- [x] Authenticate via `DOBBY_CALLBACK_SECRET` (shared secret in Authorization header)
+- [x] Accept: `jobId`, `status` (completed/failed/interrupted), `prUrl` (optional), `lastCheckpointCommit` (optional)
+- [x] Update job row: status, prUrl, finishedAt, lastCheckpointCommit
+- [x] On terminal status (completed/failed/stopped/timed_out): delete encrypted secrets and git credentials from DB
+- [x] Trigger Telegram notification (Task 13) — TODO placeholder added, will be wired in Task 13
+- [x] On `interrupted` status: trigger resume flow (decrypt secrets, provision new task with checkpoint commit, increment resumeCount)
+- [x] Write integration tests: status updates, secret cleanup on terminal status, resume on interruption
 
-**Verification:** `bun run typecheck && bun run test` passes.
+**Verification:** `bun run typecheck && bun run test` passes. ✅
 
 ---
 
