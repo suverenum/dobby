@@ -429,18 +429,18 @@ Provided as CDK or Terraform in the repo. Creates:
 **Goal:** Implement the job creation endpoint that validates input, encrypts secrets, stores the job, and provisions a Fargate task.
 
 **Steps:**
-1. Create `apps/web/src/app/api/v1/jobs/route.ts` with POST handler
-2. Validate request body with Zod: `repository` (required), `baseBranch` (default "main"), `task` (required), `existingPrUrl` (optional), `secrets` (optional object), `gitToken` (required)
-3. Validate `MPP-Token` header (placeholder for MPP integration — Task 12)
-4. If `existingPrUrl` provided, validate it matches the repository and branches (return 400 on mismatch)
-5. Check concurrency: count running jobs in DB, return 429 if at capacity
-6. Generate job ID, encrypt git credentials and secrets via KMS
-7. Insert job row with status `pending`
-8. Provision Fargate task (delegate to ECS orchestration — Task 6)
-9. Return `{ id, status }` with 201
-10. Write integration tests: validation errors (400), concurrency limit (429), successful creation (201), existingPrUrl validation
+- [x] Create `apps/web/src/app/api/v1/jobs/route.ts` with POST handler
+- [x] Validate request body with Zod: `repository` (required), `baseBranch` (default "main"), `task` (required), `existingPrUrl` (optional), `secrets` (optional object), `gitToken` (required)
+- [x] Validate `MPP-Token` header (placeholder for MPP integration — Task 12)
+- [x] If `existingPrUrl` provided, validate it matches the repository and branches (return 400 on mismatch)
+- [x] Check concurrency: count running jobs in DB, return 429 if at capacity
+- [x] Generate job ID, encrypt git credentials and secrets via KMS
+- [x] Insert job row with status `pending`
+- [x] Provision Fargate task (delegate to ECS orchestration — Task 6) — TODO placeholder added, job stays in `pending`
+- [x] Return `{ id, status }` with 201
+- [x] Write integration tests: validation errors (400), concurrency limit (429), successful creation (201), existingPrUrl validation
 
-**Verification:** `bun run typecheck && bun run test` passes.
+**Verification:** `bun run typecheck && bun run test` passes. ✅
 
 ---
 
