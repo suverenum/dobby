@@ -1,20 +1,23 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
+import { Badge } from "../../../components/ui/badge";
+import { Tabs, TabsList, TabsTrigger } from "../../../components/ui/tabs";
 import type { StatusFilter } from "./page";
 
 interface Props {
 	options: { value: StatusFilter; label: string }[];
 	current: StatusFilter;
+	counts: Record<StatusFilter, number>;
 }
 
-export function JobStatusFilter({ options, current }: Props) {
+export function JobStatusFilter({ options, current, counts }: Props) {
 	const router = useRouter();
 	const searchParams = useSearchParams();
 
 	function handleChange(value: string) {
 		const params = new URLSearchParams(searchParams.toString());
-		if (value === "all") {
+		if (value === "active") {
 			params.delete("status");
 		} else {
 			params.set("status", value);
@@ -23,21 +26,15 @@ export function JobStatusFilter({ options, current }: Props) {
 	}
 
 	return (
-		<div className="flex flex-wrap gap-2">
-			{options.map((opt) => (
-				<button
-					key={opt.value}
-					type="button"
-					onClick={() => handleChange(opt.value)}
-					className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-						current === opt.value
-							? "bg-emerald-600 text-white"
-							: "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700"
-					}`}
-				>
-					{opt.label}
-				</button>
-			))}
-		</div>
+		<Tabs value={current} onValueChange={handleChange}>
+			<TabsList className="**:data-[slot=badge]:size-5 **:data-[slot=badge]:rounded-full **:data-[slot=badge]:bg-muted-foreground/30 **:data-[slot=badge]:px-1">
+				{options.map((opt) => (
+					<TabsTrigger key={opt.value} value={opt.value}>
+						{opt.label}
+						{counts[opt.value] > 0 && <Badge variant="secondary">{counts[opt.value]}</Badge>}
+					</TabsTrigger>
+				))}
+			</TabsList>
+		</Tabs>
 	);
 }

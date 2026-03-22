@@ -1,8 +1,8 @@
 "use client";
 
-import { Button } from "@suverenum/ui";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { Button } from "../../../../components/ui/button";
 
 interface StopButtonProps {
 	jobId: string;
@@ -43,7 +43,7 @@ export function StopButton({ jobId }: StopButtonProps) {
 			<Button variant="destructive" size="sm" onClick={handleStop} disabled={loading}>
 				{loading ? "Stopping..." : "Stop Job"}
 			</Button>
-			{error && <p className="mt-1 text-xs text-rose-500">{error}</p>}
+			{error && <p className="text-destructive mt-1 text-xs">{error}</p>}
 		</div>
 	);
 }

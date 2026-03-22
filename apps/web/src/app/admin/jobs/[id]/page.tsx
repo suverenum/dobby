@@ -1,12 +1,13 @@
-import { Card, Tag } from "@suverenum/ui";
 import { eq } from "drizzle-orm";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Badge } from "../../../../components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "../../../../components/ui/card";
 import { getDb } from "../../../../db";
 import { jobs } from "../../../../db/schema";
 import { isActiveStatus, type JobStatus } from "../../../../domain/jobs";
 import { requireAdminSession } from "../../../../lib/session";
-import { STATUS_COLOR_MAP } from "../constants";
+import { STATUS_VARIANT_MAP } from "../constants";
 import { LogViewer } from "./log-viewer";
 import { StopButton } from "./stop-button";
 
@@ -71,64 +72,57 @@ export default async function AdminJobDetailPage({ params }: Props) {
 	const isTerminal = !active && status !== "pending" && status !== "interrupted";
 
 	return (
-		<div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
-			<div className="mb-6">
-				<Link
-					href="/admin/jobs"
-					className="text-sm text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
-				>
+		<div className="space-y-6">
+			<div>
+				<Link href="/admin/jobs" className="text-muted-foreground hover:text-foreground text-sm">
 					&larr; Back to jobs
 				</Link>
 			</div>
 
-			<div className="mb-6 flex items-center justify-between">
+			<div className="flex items-center justify-between">
 				<div className="flex items-center gap-3">
-					<h1 className="font-mono text-xl font-semibold text-zinc-900 dark:text-zinc-100">
-						{job.id}
-					</h1>
-					<Tag color={STATUS_COLOR_MAP[job.status as JobStatus] ?? "zinc"} variant="medium">
-						{job.status}
-					</Tag>
+					<h1 className="font-mono text-lg font-semibold md:text-xl">{job.id}</h1>
+					<Badge variant={STATUS_VARIANT_MAP[status] ?? "outline"}>{job.status}</Badge>
 				</div>
 				{(active || status === "pending" || status === "interrupted") && (
 					<StopButton jobId={job.id} />
 				)}
 			</div>
 
-			<div className="grid gap-6">
-				{/* Task */}
+			<div className="grid gap-4">
 				<Card>
-					<div className="space-y-2">
-						<h2 className="text-sm font-medium text-zinc-500 dark:text-zinc-400">Task</h2>
-						<p className="whitespace-pre-wrap text-sm text-zinc-800 dark:text-zinc-200">
-							{job.task}
-						</p>
-					</div>
+					<CardHeader>
+						<CardTitle>Task</CardTitle>
+					</CardHeader>
+					<CardContent>
+						<p className="text-muted-foreground whitespace-pre-wrap text-sm">{job.task}</p>
+					</CardContent>
 				</Card>
 
-				{/* Parameters */}
 				<Card>
-					<div className="space-y-3">
-						<h2 className="text-sm font-medium text-zinc-500 dark:text-zinc-400">Parameters</h2>
-						<dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-							<dt className="text-zinc-500 dark:text-zinc-400">Repository</dt>
-							<dd className="text-zinc-800 dark:text-zinc-200">{job.repository}</dd>
+					<CardHeader>
+						<CardTitle>Parameters</CardTitle>
+					</CardHeader>
+					<CardContent>
+						<dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-3 text-sm">
+							<dt className="text-muted-foreground">Repository</dt>
+							<dd>{job.repository}</dd>
 
-							<dt className="text-zinc-500 dark:text-zinc-400">Base Branch</dt>
-							<dd className="text-zinc-800 dark:text-zinc-200">{job.baseBranch}</dd>
+							<dt className="text-muted-foreground">Base Branch</dt>
+							<dd>{job.baseBranch}</dd>
 
-							<dt className="text-zinc-500 dark:text-zinc-400">Working Branch</dt>
-							<dd className="text-zinc-800 dark:text-zinc-200">{job.workingBranch}</dd>
+							<dt className="text-muted-foreground">Working Branch</dt>
+							<dd>{job.workingBranch}</dd>
 
 							{job.existingPrUrl && (
 								<>
-									<dt className="text-zinc-500 dark:text-zinc-400">Existing PR</dt>
+									<dt className="text-muted-foreground">Existing PR</dt>
 									<dd>
 										<a
 											href={job.existingPrUrl}
 											target="_blank"
 											rel="noopener noreferrer"
-											className="text-emerald-600 hover:text-emerald-500 dark:text-emerald-400"
+											className="hover:text-primary underline underline-offset-4"
 										>
 											{job.existingPrUrl}
 										</a>
@@ -138,13 +132,13 @@ export default async function AdminJobDetailPage({ params }: Props) {
 
 							{job.prUrl && (
 								<>
-									<dt className="text-zinc-500 dark:text-zinc-400">PR URL</dt>
+									<dt className="text-muted-foreground">PR URL</dt>
 									<dd>
 										<a
 											href={job.prUrl}
 											target="_blank"
 											rel="noopener noreferrer"
-											className="text-emerald-600 hover:text-emerald-500 dark:text-emerald-400"
+											className="hover:text-primary underline underline-offset-4"
 										>
 											{job.prUrl}
 										</a>
@@ -152,45 +146,44 @@ export default async function AdminJobDetailPage({ params }: Props) {
 								</>
 							)}
 						</dl>
-					</div>
+					</CardContent>
 				</Card>
 
-				{/* Timing & Cost */}
 				<Card>
-					<div className="space-y-3">
-						<h2 className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
-							Timing &amp; Cost
-						</h2>
-						<dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-							<dt className="text-zinc-500 dark:text-zinc-400">Submitted</dt>
-							<dd className="text-zinc-800 dark:text-zinc-200">{formatTime(job.submittedAt)}</dd>
+					<CardHeader>
+						<CardTitle>Timing &amp; Cost</CardTitle>
+					</CardHeader>
+					<CardContent>
+						<dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-3 text-sm">
+							<dt className="text-muted-foreground">Submitted</dt>
+							<dd>{formatTime(job.submittedAt)}</dd>
 
-							<dt className="text-zinc-500 dark:text-zinc-400">Started</dt>
-							<dd className="text-zinc-800 dark:text-zinc-200">{formatTime(job.startedAt)}</dd>
+							<dt className="text-muted-foreground">Started</dt>
+							<dd>{formatTime(job.startedAt)}</dd>
 
-							<dt className="text-zinc-500 dark:text-zinc-400">Finished</dt>
-							<dd className="text-zinc-800 dark:text-zinc-200">{formatTime(job.finishedAt)}</dd>
+							<dt className="text-muted-foreground">Finished</dt>
+							<dd>{formatTime(job.finishedAt)}</dd>
 
-							<dt className="text-zinc-500 dark:text-zinc-400">Duration</dt>
-							<dd className="text-zinc-800 dark:text-zinc-200">
-								{formatDuration(job.startedAt, job.finishedAt)}
-							</dd>
+							<dt className="text-muted-foreground">Duration</dt>
+							<dd>{formatDuration(job.startedAt, job.finishedAt)}</dd>
 
-							<dt className="text-zinc-500 dark:text-zinc-400">Cost (FLOPS)</dt>
-							<dd className="font-mono text-zinc-800 dark:text-zinc-200">
-								{formatCost(job.costFlops)}
-							</dd>
+							<dt className="text-muted-foreground">Cost (FLOPS)</dt>
+							<dd className="font-mono">{formatCost(job.costFlops)}</dd>
 
-							<dt className="text-zinc-500 dark:text-zinc-400">Resume Count</dt>
-							<dd className="text-zinc-800 dark:text-zinc-200">{job.resumeCount ?? 0}</dd>
+							<dt className="text-muted-foreground">Resume Count</dt>
+							<dd>{job.resumeCount ?? 0}</dd>
 						</dl>
-					</div>
+					</CardContent>
 				</Card>
 
-				{/* Logs */}
 				{job.logStreamName && (
 					<Card>
-						<LogViewer jobId={job.id} isTerminal={isTerminal} />
+						<CardHeader>
+							<CardTitle>Logs</CardTitle>
+						</CardHeader>
+						<CardContent>
+							<LogViewer jobId={job.id} isTerminal={isTerminal} />
+						</CardContent>
 					</Card>
 				)}
 			</div>

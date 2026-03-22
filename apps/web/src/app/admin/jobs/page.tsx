@@ -1,19 +1,33 @@
-import { Card, Tag } from "@suverenum/ui";
-import { desc, eq, inArray } from "drizzle-orm";
+import { count, desc, inArray } from "drizzle-orm";
 import Link from "next/link";
+import { Badge } from "../../../components/ui/badge";
+import {
+	Table,
+	TableBody,
+	TableCell,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "../../../components/ui/table";
 import { getDb } from "../../../db";
 import { jobs } from "../../../db/schema";
-import { ACTIVE_STATUSES, JOB_STATUSES, type JobStatus } from "../../../domain/jobs";
+import { ACTIVE_STATUSES, type JobStatus, TERMINAL_STATUSES } from "../../../domain/jobs";
 import { requireAdminSession } from "../../../lib/session";
-import { STATUS_COLOR_MAP } from "./constants";
+import { STATUS_VARIANT_MAP } from "./constants";
 import { JobStatusFilter } from "./status-filter";
 
-export type StatusFilter = "all" | "active" | JobStatus;
+export type StatusFilter = "active" | "completed" | "all";
+
+const NON_TERMINAL_STATUSES: JobStatus[] = [
+	"pending",
+	...ACTIVE_STATUSES,
+	"interrupted",
+] as JobStatus[];
 
 const FILTER_OPTIONS: { value: StatusFilter; label: string }[] = [
-	{ value: "all", label: "All" },
 	{ value: "active", label: "Active" },
-	...JOB_STATUSES.map((s) => ({ value: s as StatusFilter, label: s.replace("_", " ") })),
+	{ value: "completed", label: "Completed" },
+	{ value: "all", label: "All" },
 ];
 
 function shortRepo(repository: string): string {
@@ -37,8 +51,7 @@ function formatDuration(startedAt: Date | null, finishedAt: Date | null): string
 
 function formatCost(costFlops: string | null): string {
 	if (!costFlops) return "-";
-	const n = Number(costFlops);
-	return n.toFixed(2);
+	return Number(costFlops).toFixed(2);
 }
 
 function formatTime(date: Date | null): string {
@@ -56,15 +69,12 @@ export default async function AdminJobsPage({ searchParams }: Props) {
 	const params = await searchParams;
 	const filter: StatusFilter =
 		params.status &&
-		(params.status === "all" ||
-			params.status === "active" ||
-			JOB_STATUSES.includes(params.status as JobStatus))
+		(params.status === "all" || params.status === "completed" || params.status === "active")
 			? (params.status as StatusFilter)
-			: "all";
+			: "active";
 
 	const db = getDb();
 
-	// Select only columns needed for rendering (exclude encrypted credentials)
 	const columns = {
 		id: jobs.id,
 		status: jobs.status,
@@ -76,6 +86,20 @@ export default async function AdminJobsPage({ searchParams }: Props) {
 		costFlops: jobs.costFlops,
 	};
 
+	const [activeCountResult, completedCountResult, totalCountResult] = await Promise.all([
+		db.select({ value: count() }).from(jobs).where(inArray(jobs.status, NON_TERMINAL_STATUSES)),
+		db
+			.select({ value: count() })
+			.from(jobs)
+			.where(inArray(jobs.status, [...TERMINAL_STATUSES])),
+		db.select({ value: count() }).from(jobs),
+	]);
+	const counts: Record<StatusFilter, number> = {
+		active: activeCountResult[0]?.value ?? 0,
+		completed: completedCountResult[0]?.value ?? 0,
+		all: totalCountResult[0]?.value ?? 0,
+	};
+
 	const jobRows =
 		filter === "all"
 			? await db.select(columns).from(jobs).orderBy(desc(jobs.submittedAt))
@@ -83,96 +107,77 @@ export default async function AdminJobsPage({ searchParams }: Props) {
 				? await db
 						.select(columns)
 						.from(jobs)
-						.where(inArray(jobs.status, [...ACTIVE_STATUSES]))
+						.where(inArray(jobs.status, NON_TERMINAL_STATUSES))
 						.orderBy(desc(jobs.submittedAt))
 				: await db
 						.select(columns)
 						.from(jobs)
-						.where(eq(jobs.status, filter))
+						.where(inArray(jobs.status, [...TERMINAL_STATUSES]))
 						.orderBy(desc(jobs.submittedAt));
 
 	return (
-		<div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
-			<div className="mb-6 flex items-center justify-between">
-				<h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">Jobs</h1>
+		<div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
+			<div className="px-4 lg:px-6">
+				<JobStatusFilter options={FILTER_OPTIONS} current={filter} counts={counts} />
 			</div>
-
-			<div className="mb-4">
-				<JobStatusFilter options={FILTER_OPTIONS} current={filter} />
-			</div>
-
-			<Card padding="none">
-				<div className="overflow-x-auto">
-					<table className="w-full text-left text-sm">
-						<thead>
-							<tr className="border-b border-zinc-200 dark:border-zinc-700">
-								<th className="px-4 py-3 font-medium text-zinc-500 dark:text-zinc-400">ID</th>
-								<th className="px-4 py-3 font-medium text-zinc-500 dark:text-zinc-400">
-									Repository
-								</th>
-								<th className="px-4 py-3 font-medium text-zinc-500 dark:text-zinc-400">Task</th>
-								<th className="px-4 py-3 font-medium text-zinc-500 dark:text-zinc-400">Status</th>
-								<th className="px-4 py-3 font-medium text-zinc-500 dark:text-zinc-400">
-									Submitted
-								</th>
-								<th className="px-4 py-3 font-medium text-zinc-500 dark:text-zinc-400">Duration</th>
-								<th className="px-4 py-3 font-medium text-zinc-500 dark:text-zinc-400">Cost</th>
-							</tr>
-						</thead>
-						<tbody>
+			<div className="relative flex flex-col gap-4 overflow-auto px-4 lg:px-6">
+				<div className="overflow-hidden rounded-lg border">
+					<Table>
+						<TableHeader className="bg-muted">
+							<TableRow>
+								<TableHead>ID</TableHead>
+								<TableHead>Repository</TableHead>
+								<TableHead>Task</TableHead>
+								<TableHead>Status</TableHead>
+								<TableHead>Submitted</TableHead>
+								<TableHead>Duration</TableHead>
+								<TableHead>Cost</TableHead>
+							</TableRow>
+						</TableHeader>
+						<TableBody>
 							{jobRows.length === 0 ? (
-								<tr>
-									<td
-										colSpan={7}
-										className="px-4 py-8 text-center text-zinc-400 dark:text-zinc-500"
-									>
-										No jobs found.
-									</td>
-								</tr>
+								<TableRow>
+									<TableCell colSpan={7} className="h-24 text-center">
+										No results.
+									</TableCell>
+								</TableRow>
 							) : (
 								jobRows.map((job) => (
-									<tr
-										key={job.id}
-										className="border-b border-zinc-100 transition-colors hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800/50"
-									>
-										<td className="px-4 py-3">
+									<TableRow key={job.id}>
+										<TableCell>
 											<Link
 												href={`/admin/jobs/${job.id}`}
-												className="font-mono text-xs text-emerald-600 hover:text-emerald-500 dark:text-emerald-400 dark:hover:text-emerald-300"
+												className="font-mono text-xs underline-offset-4 hover:underline"
 											>
 												{job.id}
 											</Link>
-										</td>
-										<td className="px-4 py-3 text-zinc-700 dark:text-zinc-300">
-											{shortRepo(job.repository)}
-										</td>
-										<td className="max-w-xs px-4 py-3 text-zinc-600 dark:text-zinc-400">
-											{truncateTask(job.task)}
-										</td>
-										<td className="px-4 py-3">
-											<Tag
-												color={STATUS_COLOR_MAP[job.status as JobStatus] ?? "zinc"}
-												variant="medium"
+										</TableCell>
+										<TableCell>{shortRepo(job.repository)}</TableCell>
+										<TableCell className="max-w-xs">{truncateTask(job.task)}</TableCell>
+										<TableCell>
+											<Badge
+												variant={STATUS_VARIANT_MAP[job.status as JobStatus] ?? "outline"}
+												className="text-muted-foreground px-1.5"
 											>
 												{job.status}
-											</Tag>
-										</td>
-										<td className="whitespace-nowrap px-4 py-3 text-zinc-500 dark:text-zinc-400">
+											</Badge>
+										</TableCell>
+										<TableCell className="whitespace-nowrap">
 											{formatTime(job.submittedAt)}
-										</td>
-										<td className="whitespace-nowrap px-4 py-3 text-zinc-500 dark:text-zinc-400">
+										</TableCell>
+										<TableCell className="whitespace-nowrap">
 											{formatDuration(job.startedAt, job.finishedAt)}
-										</td>
-										<td className="whitespace-nowrap px-4 py-3 font-mono text-zinc-500 dark:text-zinc-400">
+										</TableCell>
+										<TableCell className="whitespace-nowrap font-mono">
 											{formatCost(job.costFlops)}
-										</td>
-									</tr>
+										</TableCell>
+									</TableRow>
 								))
 							)}
-						</tbody>
-					</table>
+						</TableBody>
+					</Table>
 				</div>
-			</Card>
+			</div>
 		</div>
 	);
 }
