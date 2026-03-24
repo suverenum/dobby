@@ -77,6 +77,14 @@ export async function provisionTask(
 		{ name: "DOBBY_EXISTING_PR_URL", value: job.existingPrUrl ?? "" },
 	];
 
+	// Inject operator-managed LLM API keys
+	if (env.ANTHROPIC_API_KEY) {
+		containerEnv.push({ name: "ANTHROPIC_API_KEY", value: env.ANTHROPIC_API_KEY });
+	}
+	if (env.OPENAI_API_KEY) {
+		containerEnv.push({ name: "OPENAI_API_KEY", value: env.OPENAI_API_KEY });
+	}
+
 	// Inject caller secrets as additional env vars (block reserved names)
 	if (decryptedSecrets.secrets) {
 		const reservedPrefixes = ["DOBBY_", "AWS_", "ECS_"];
@@ -122,7 +130,7 @@ export async function provisionTask(
 			cpu: String(env.DOBBY_VM_CPU * 1024), // vCPU in CPU units (1024 per vCPU)
 			memory: String(env.DOBBY_VM_CPU * 4 * 1024), // 4 GB per vCPU in MiB
 			ephemeralStorage: {
-				sizeInGiB: 20,
+				sizeInGiB: 21,
 			},
 		},
 		count: 1,

@@ -40,6 +40,10 @@ const envSchema = z.object({
 	ECS_SECURITY_GROUPS: z.string().optional(),
 	KMS_KEY_ID: z.string().optional(),
 
+	// Dobby — LLM (operator-managed)
+	ANTHROPIC_API_KEY: z.string().optional(),
+	OPENAI_API_KEY: z.string().optional(),
+
 	// Dobby — MPP
 	MPP_ENDPOINT: z.string().optional(),
 	MPP_API_KEY: z.string().optional(),
