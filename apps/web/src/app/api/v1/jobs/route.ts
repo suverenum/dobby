@@ -27,6 +27,10 @@ const jobSubmissionSchema = z.object({
 			"repository must be a valid GitHub HTTPS URL",
 		),
 	baseBranch: z.string().default("main"),
+	workingBranch: z
+		.string()
+		.regex(/^[a-zA-Z0-9._/-]+$/, "workingBranch must be a valid git branch name")
+		.optional(),
 	task: z.string().min(1, "task is required"),
 	existingPrUrl: z
 		.string()
@@ -136,7 +140,7 @@ export async function POST(request: NextRequest) {
 	const jobId = generateJobId();
 	const workingBranch = input.existingPrUrl
 		? input.baseBranch // Will be overridden by runner when following existing PR
-		: generateWorkingBranch(input.task);
+		: (input.workingBranch ?? generateWorkingBranch(input.task));
 
 	// Encrypt secrets
 	const encryptedGitCredentials = await encrypt(input.gitToken);

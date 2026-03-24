@@ -57,7 +57,8 @@ Response (when complete):
 
 | Field           | Description                                              |
 | --------------- | -------------------------------------------------------- |
-| `baseBranch`    | Branch to base work on (default: `main`)                 |
+| `baseBranch`    | Branch to clone from and PR into (default: `main`)       |
+| `workingBranch` | Branch name for the work (default: auto-generated)       |
 | `existingPrUrl` | Push to an existing PR instead of creating a new one     |
 | `secrets`       | Key-value env vars passed to the runner (encrypted)      |
 
