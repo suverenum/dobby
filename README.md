@@ -5,7 +5,7 @@ Ephemeral AI coding service. POST a task + a GitHub repo, get back a pull reques
 ## How It Works
 
 1. **Submit** a job via `POST /v1/jobs` with a task description, GitHub repo URL, git token, and MPP payment token
-2. **Dobby provisions** an ephemeral Fargate Spot container running an AI coding agent (Ralphex)
+2. **Dobby provisions** an ephemeral Fargate Spot container running an AI coding agent (OpenCode + Hyperpowers)
 3. **The agent** clones the repo, executes the task, and creates a draft PR
 4. **Poll** `GET /v1/jobs/:id` for status updates and the PR URL when done
 5. **Billing** settles automatically — per-minute compute cost, unused escrow refunded on-chain
@@ -16,10 +16,10 @@ Jobs survive AWS Spot interruptions: the runner checkpoints its work and Dobby a
 
 ```
 Caller (REST API)  →  Vercel (Next.js control plane + Admin UI)  →  AWS ECS Fargate Spot (runner containers)
-                          ├── Neon Postgres (jobs table)                  ├── Ralphex (multi-agent AI coding)
-                          ├── MPP (FLOPS escrow/billing)                  ├── GitHub (clone, push, PR)
-                          ├── AWS KMS (secret encryption)                 └── Callback → API on status changes
-                          ├── CloudWatch (runner logs)
+                          ├── Neon Postgres (jobs table)                  ├── OpenCode + Hyperpowers (AI coding)
+                          ├── MPP (FLOPS escrow/billing)                  ├── AWS Bedrock (Claude Opus 4 LLM)
+                          ├── AWS KMS (secret encryption)                 ├── GitHub (clone, push, PR)
+                          ├── CloudWatch (runner logs)                    └── Callback → API on status changes
                           └── EventBridge (Spot interruption events)
 ```
 
@@ -77,7 +77,7 @@ specs/                 Product specs
 | Testing       | Vitest + React Testing Library + Playwright        |
 | Observability | Sentry + PostHog                                   |
 | Notifications | Telegram                                           |
-| CI/CD         | GitHub Actions + Claude Code review                |
+| CI/CD         | GitHub Actions                                 |
 | Deploy        | Vercel                                             |
 
 ## Job Lifecycle
@@ -101,13 +101,14 @@ Copy `.env.example` to `apps/web/.env.local`.
 | `DATABASE_URL`              | Yes      | Neon Postgres connection string          |
 | `DOBBY_CALLBACK_SECRET`     | Yes      | Shared secret for runner → API callbacks |
 | `DOBBY_CALLBACK_URL`        | Yes      | Base URL for runner callbacks            |
-| `AWS_ACCESS_KEY_ID`         | Yes      | AWS credentials                          |
-| `AWS_SECRET_ACCESS_KEY`     | Yes      | AWS credentials                          |
+| `AWS_ACCESS_KEY_ID`         | Yes      | AWS credentials (ECS + Bedrock)          |
+| `AWS_SECRET_ACCESS_KEY`     | Yes      | AWS credentials (ECS + Bedrock)          |
 | `ECS_CLUSTER_ARN`           | Yes      | ECS cluster ARN                          |
 | `ECS_TASK_DEFINITION_ARN`   | Yes      | ECS task definition ARN                  |
 | `ECS_SUBNETS`               | Yes      | Comma-separated subnet IDs               |
 | `ECS_SECURITY_GROUPS`       | Yes      | Comma-separated security group IDs       |
 | `KMS_KEY_ID`                | Yes      | KMS key ID for secret encryption         |
+| `BEDROCK_MODEL_ID`          | No       | Bedrock model ID (default: Claude Opus 4)|
 | `MPP_ENDPOINT`              | No       | MPP API endpoint (dev mode if missing)   |
 | `MPP_API_KEY`               | No       | MPP API key                              |
 | `SESSION_SECRET`            | No       | HMAC key for admin session cookies       |
@@ -122,7 +123,7 @@ Optional services (Sentry, PostHog, Telegram, MPP) degrade gracefully when keys 
 
 ## Deploy
 
-Push to `main` for automatic Vercel deployment. CI runs lint, format check, typecheck, tests, and build on every push and PR. Claude Code automatically reviews PRs when configured.
+Push to `main` for automatic Vercel deployment. CI runs lint, format check, typecheck, tests, and build on every push and PR.
 
 ## Prerequisites
 

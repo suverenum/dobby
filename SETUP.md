@@ -35,8 +35,8 @@ cd apps/web && vercel env pull .env.local
 
 | Variable | Description |
 |----------|-------------|
-| `AWS_ACCESS_KEY_ID` | IAM user access key |
-| `AWS_SECRET_ACCESS_KEY` | IAM user secret key |
+| `AWS_ACCESS_KEY_ID` | IAM user access key (ECS + Bedrock) |
+| `AWS_SECRET_ACCESS_KEY` | IAM user secret key (ECS + Bedrock) |
 | `AWS_REGION` | AWS region (default: `us-east-1`) |
 | `ECS_CLUSTER_ARN` | ECS cluster ARN |
 | `ECS_TASK_DEFINITION_ARN` | ECS task definition ARN |
@@ -53,6 +53,7 @@ cd apps/web && vercel env pull .env.local
 | `DOBBY_ACCOUNT_VCPU_LIMIT` | `24` | Account vCPU quota |
 | `DOBBY_VM_CPU` | `4` | vCPU per runner |
 | `DOBBY_CONTAINER_IMAGE` | ECR default | Custom runner Docker image |
+| `BEDROCK_MODEL_ID` | `us.anthropic.claude-opus-4-6-v1` | AWS Bedrock model for the AI agent |
 
 ### Internal secrets
 
@@ -87,6 +88,14 @@ Create an IAM user for the app with this policy:
     {
       "Effect": "Allow",
       "Action": ["ecs:RunTask", "ecs:StopTask"],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+      ],
       "Resource": "*"
     },
     {

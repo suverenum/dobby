@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Dobby is an ephemeral AI coding service. Callers submit a task + GitHub repo via REST API, Dobby provisions an ECS Fargate Spot container running an AI coding agent (Ralphex), and returns a draft pull request. Billing is per-minute in FLOPS tokens via the Machine Payments Protocol.
+Dobby is an ephemeral AI coding service. Callers submit a task + GitHub repo via REST API, Dobby provisions an ECS Fargate Spot container running OpenCode with Hyperpowers (execute-ralph) backed by AWS Bedrock, and returns a draft pull request. Billing is per-minute in FLOPS tokens via the Machine Payments Protocol.
 
 The codebase is a Bun monorepo using Next.js 16 (App Router, Turbopack, React Compiler), Turborepo, Drizzle ORM + Neon Postgres, Tailwind CSS v4, Biome, Vitest, and Playwright.
 
