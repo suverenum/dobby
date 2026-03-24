@@ -181,7 +181,7 @@ export async function POST(request: NextRequest) {
 
 		// Derive log stream name from task ARN (awslogs format: prefix/container-name/task-id)
 		const taskId = provisionResult.taskArn.split("/").pop();
-		const logStreamName = taskId ? `dobby-runner/dobby-runner/${taskId}` : null;
+		const logStreamName = taskId ? `runner/dobby-runner/${taskId}` : null;
 
 		await db
 			.update(jobs)

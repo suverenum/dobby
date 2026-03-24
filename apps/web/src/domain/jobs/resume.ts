@@ -68,7 +68,7 @@ export async function resumeJob(job: Job, checkpointCommit?: string): Promise<vo
 
 	// Derive log stream name from task ARN (awslogs format: prefix/container-name/task-id)
 	const taskId = result.taskArn.split("/").pop();
-	const logStreamName = taskId ? `dobby-runner/dobby-runner/${taskId}` : null;
+	const logStreamName = taskId ? `runner/dobby-runner/${taskId}` : null;
 
 	// Update job with checkpoint, increment resume count, and store new task ARN.
 	// Use CAS on status = 'provisioning' to avoid overwriting a concurrent terminal
