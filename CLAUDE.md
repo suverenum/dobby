@@ -59,9 +59,16 @@ bun run storybook    # Start Storybook for UI components
 - Schema in `apps/web/src/db/schema.ts` (single `jobs` table)
 - Migrations via `drizzle-kit` (run from `apps/web/`): `db:generate`, `db:migrate`, `db:push`, `db:studio`
 
+## Issue Tracking
+
+- **Beads (bd)** for all issue tracking — Dolt-powered, dependency-aware graph tracker
+- `bd ready` to see unblocked work, `bd create` / `bd update` / `bd close` for lifecycle
+- Issues prefixed `dobby-<hash>` (e.g., `dobby-a3f2`)
+- See AGENTS.md for full bd workflow and agent instructions
+
 ## Guidelines & Workflow
 
-- `AGENTS.md` — instructions for AI coding agents
+- `AGENTS.md` — instructions for AI coding agents (includes beads integration)
 - `guidelines/workflow.md` — product improvement workflow (PRD → SPEC → tasks → implement)
 - `guidelines/docs/` — PRD and SPEC templates
 - `guidelines/roles/` — role-specific guidelines (EM, Engineer)

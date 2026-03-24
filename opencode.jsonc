@@ -1,20 +1,14 @@
 {
 	"$schema": "https://opencode.ai/config.json",
-	"model": "anthropic/claude-opus-4.6",
-	"small_model": "anthropic/claude-haiku-4.5",
 	"autoupdate": true,
 	"share": "disabled",
-	// Point OpenCode to project docs for context
 	"instructions": ["AGENTS.md", "CLAUDE.md"],
-	// MCP servers (migrated from .claude/settings.json plugins)
 	"mcp": {
 		"context7": {
 			"type": "remote",
 			"url": "https://mcp.context7.com/mcp"
 		}
 	},
-	// Built-in Biome formatter auto-detects biome.json -- no custom config needed.
-	// Disable Prettier since it's only used for Tailwind class sorting (handled at pre-commit).
 	"formatter": {
 		"prettier": {
 			"disabled": true
