@@ -1,137 +1,132 @@
 # Dobby
 
-Monorepo boilerplate with Next.js 16, Bun, Turborepo, Drizzle ORM, Neon Postgres, Tailwind CSS v4, Protocol theme, Storybook, Biome, Vitest, Playwright, Sentry, and PostHog.
+Ephemeral AI coding service. POST a task + a GitHub repo, get back a pull request. Pay per minute in FLOPS tokens via the Machine Payments Protocol.
 
-## Quick Start
+## How It Works
 
-```bash
-# 1. Clone (or use GitHub template)
-gh repo create my-project --template suverenum/boiler
-cd my-project
+1. **Submit** a job via `POST /v1/jobs` with a task description, GitHub repo URL, git token, and MPP payment token
+2. **Dobby provisions** an ephemeral Fargate Spot container running an AI coding agent (Ralphex)
+3. **The agent** clones the repo, executes the task, and creates a draft PR
+4. **Poll** `GET /v1/jobs/:id` for status updates and the PR URL when done
+5. **Billing** settles automatically — per-minute compute cost, unused escrow refunded on-chain
 
-# 2. Run setup script
-chmod +x setup.sh
-./setup.sh
+Jobs survive AWS Spot interruptions: the runner checkpoints its work and Dobby auto-resumes on a new container.
 
-# 3. Start developing
-bun run dev
+## Architecture
+
+```
+Caller (REST API)  →  Vercel (Next.js control plane + Admin UI)  →  AWS ECS Fargate Spot (runner containers)
+                          ├── Neon Postgres (jobs table)                  ├── Ralphex (multi-agent AI coding)
+                          ├── MPP (FLOPS escrow/billing)                  ├── GitHub (clone, push, PR)
+                          ├── AWS KMS (secret encryption)                 └── Callback → API on status changes
+                          ├── CloudWatch (runner logs)
+                          └── EventBridge (Spot interruption events)
 ```
 
-The setup script will:
-1. Rename all `@suverenum` / `dobby` placeholders to your project name
-2. Optionally create and link a Vercel project
-3. Optionally create a Neon Postgres database
-4. Generate `.env.local` and install dependencies
+### Monorepo Structure
+
+```
+apps/web/              Next.js 16 — API, admin UI, job orchestration
+packages/ui/           Shared UI components (Radix + CVA + Storybook)
+packages/utils/        Shared utilities (cn, etc.)
+packages/tsconfig/     Shared TypeScript configs
+runner/                Docker container (clone → execute agent → PR)
+specs/                 Product specs
+```
 
 ## Commands
 
-| Command | Description |
-|---|---|
-| `bun run dev` | Start all packages in dev mode (Turbopack) |
-| `bun run build` | Production build (Turborepo cached) |
-| `bun run test` | Run unit tests (Vitest) |
-| `bun run test:e2e` | Run E2E tests (Playwright) |
-| `bun run lint` | Lint with Biome |
-| `bun run typecheck` | TypeScript type checking |
-| `bun run format` | Format with Biome + Prettier (Tailwind class sort) |
-| `bun run format:check` | Check formatting |
-| `bun run storybook` | Start Storybook for UI components |
-| `bun run build-storybook` | Build static Storybook site |
+| Command             | Description                                        |
+| ------------------- | -------------------------------------------------- |
+| `bun run dev`       | Start all packages in dev mode (Turbopack)         |
+| `bun run build`     | Production build (Turborepo cached)                |
+| `bun run test`      | Run unit tests (Vitest)                            |
+| `bun run test:e2e`  | Run E2E tests (Playwright)                         |
+| `bun run lint`      | Lint with Biome                                    |
+| `bun run typecheck` | TypeScript type checking                           |
+| `bun run format`    | Format with Biome + Prettier (Tailwind class sort) |
+| `bun run storybook` | Start Storybook for UI components                  |
 
 ### Database (run from `apps/web/`)
 
-| Command | Description |
-|---|---|
+| Command               | Description                 |
+| --------------------- | --------------------------- |
 | `bun run db:generate` | Generate Drizzle migrations |
-| `bun run db:migrate` | Run migrations |
-| `bun run db:push` | Push schema directly (dev) |
-| `bun run db:studio` | Open Drizzle Studio |
-
-## Structure
-
-```
-├── apps/web/              Next.js 16 application
-├── packages/ui/           Shared UI components (Radix + CVA + Storybook)
-├── packages/utils/        Shared utilities (cn, etc.)
-├── packages/tsconfig/     Shared TypeScript configs
-├── guidelines/            PRD/SPEC templates, role guides, workflow
-├── specs/                 Product specs per feature branch
-├── .claude/skills/        Claude Code skills for the stack
-├── .github/workflows/     CI pipeline + Claude Code review
-└── setup.sh               Post-clone setup script
-```
+| `bun run db:migrate`  | Run migrations              |
+| `bun run db:push`     | Push schema directly (dev)  |
+| `bun run db:studio`   | Open Drizzle Studio         |
 
 ## Stack
 
-| Category | Technology |
-|---|---|
-| Framework | Next.js 16 (App Router, Turbopack, React Compiler) |
-| Language | TypeScript (strict) |
-| Runtime | Bun 1.3+ |
-| Monorepo | Bun workspaces + Turborepo |
-| Database | Drizzle ORM + Neon serverless Postgres |
-| Styling | Tailwind CSS v4 + Protocol theme (emerald/zinc) |
-| Dark mode | next-themes (system preference sync) |
-| Server state | TanStack Query |
-| Client state | Zustand |
-| Validation | Zod |
-| UI components | Radix primitives + CVA + Storybook 10 |
-| Linting | Biome |
-| Testing | Vitest + React Testing Library + Playwright |
-| Observability | Sentry + PostHog |
-| CI/CD | GitHub Actions + Claude Code review |
+| Category      | Technology                                         |
+| ------------- | -------------------------------------------------- |
+| Framework     | Next.js 16 (App Router, Turbopack, React Compiler) |
+| Language      | TypeScript (strict)                                |
+| Runtime       | Bun 1.3+                                           |
+| Monorepo      | Bun workspaces + Turborepo                         |
+| Database      | Drizzle ORM + Neon serverless Postgres             |
+| Compute       | AWS ECS Fargate Spot                               |
+| Secrets       | AWS KMS encryption                                 |
+| Billing       | Machine Payments Protocol (FLOPS tokens)           |
+| Styling       | Tailwind CSS v4 + shadcn/ui (base-nova)            |
+| UI components | Radix primitives + CVA + Storybook 10              |
+| Server state  | TanStack Query                                     |
+| Client state  | Zustand                                            |
+| Validation    | Zod v4                                             |
+| Linting       | Biome                                              |
+| Testing       | Vitest + React Testing Library + Playwright        |
+| Observability | Sentry + PostHog                                   |
+| Notifications | Telegram                                           |
+| CI/CD         | GitHub Actions + Claude Code review                |
+| Deploy        | Vercel                                             |
 
-## UI Components
+## Job Lifecycle
 
-The `packages/ui/` library includes Protocol-themed components:
+```
+pending → provisioning → cloning → executing → finalizing → completed
+                                                           → failed
+                                                           → timed_out
+                                                           → stopped (manual)
+                                       interrupted → (auto-resume) → provisioning → ...
+```
 
-- **Button** — 7 variants (default, secondary, filled, outline, text, destructive, ghost)
-- **Card** — with Header, Title, Description, Content, Footer
-- **Input** — 3 sizes (sm, default, lg)
-- **Tag** — 5 colors (emerald, sky, amber, rose, zinc) x 2 variants
-- **Prose** — Typography wrapper for long-form content
-- **GridPattern** — Decorative SVG grid pattern
-- **HeroPattern** — Gradient hero background with grid overlay
-
-Run `bun run storybook` to browse all components.
+Jobs are billed per minute: `ceil(duration_minutes) * (hourly_rate / 60)`, capped at the max budget. Unused escrow is refunded on settlement.
 
 ## Environment Variables
 
-Copy `.env.example` to `apps/web/.env.local` (the setup script does this automatically).
+Copy `.env.example` to `apps/web/.env.local`.
 
-| Variable | Required | Description |
-|---|---|---|
-| `DATABASE_URL` | Yes | Neon Postgres connection string |
-| `SESSION_SECRET` | No | HMAC key for session cookies |
-| `NEXT_PUBLIC_SENTRY_DSN` | No | Sentry error tracking |
-| `SENTRY_AUTH_TOKEN` | No | Sentry source maps (CI) |
-| `NEXT_PUBLIC_POSTHOG_KEY` | No | PostHog analytics |
-| `NEXT_PUBLIC_POSTHOG_HOST` | No | PostHog API host (defaults to us.i.posthog.com) |
-| `ANTHROPIC_API_KEY` | No | Claude Code review on PRs |
-| `TURBO_TOKEN` | No | Turborepo remote cache |
-| `TURBO_TEAM` | No | Vercel team for remote cache |
+| Variable                    | Required | Description                              |
+| --------------------------- | -------- | ---------------------------------------- |
+| `DATABASE_URL`              | Yes      | Neon Postgres connection string          |
+| `DOBBY_CALLBACK_SECRET`     | Yes      | Shared secret for runner → API callbacks |
+| `DOBBY_CALLBACK_URL`        | Yes      | Base URL for runner callbacks            |
+| `AWS_ACCESS_KEY_ID`         | Yes      | AWS credentials                          |
+| `AWS_SECRET_ACCESS_KEY`     | Yes      | AWS credentials                          |
+| `ECS_CLUSTER_ARN`           | Yes      | ECS cluster ARN                          |
+| `ECS_TASK_DEFINITION_ARN`   | Yes      | ECS task definition ARN                  |
+| `ECS_SUBNETS`               | Yes      | Comma-separated subnet IDs               |
+| `ECS_SECURITY_GROUPS`       | Yes      | Comma-separated security group IDs       |
+| `KMS_KEY_ID`                | Yes      | KMS key ID for secret encryption         |
+| `MPP_ENDPOINT`              | No       | MPP API endpoint (dev mode if missing)   |
+| `MPP_API_KEY`               | No       | MPP API key                              |
+| `SESSION_SECRET`            | No       | HMAC key for admin session cookies       |
+| `DOBBY_ADMIN_PASSWORD_HASH` | No       | bcrypt hash for admin UI                 |
+| `CRON_SECRET`               | No       | Vercel Cron auth for timeout enforcement |
+| `NEXT_PUBLIC_SENTRY_DSN`    | No       | Sentry error tracking                    |
+| `NEXT_PUBLIC_POSTHOG_KEY`   | No       | PostHog analytics                        |
+| `DOBBY_TELEGRAM_BOT_TOKEN`  | No       | Telegram notifications                   |
+| `DOBBY_TELEGRAM_CHAT_ID`    | No       | Telegram chat ID                         |
 
-Optional services (Sentry, PostHog) degrade gracefully when keys are missing.
-
-## AI Agent Workflow
-
-This template includes a structured workflow for AI-assisted development:
-
-1. **PRD** — Product requirement document (`guidelines/docs/prd.md`)
-2. **SPEC** — Technical specification (`guidelines/docs/spec.md`)
-3. **Tasks** — Decomposed into actionable items
-4. **Implement** — TDD with colocated tests
-
-See `guidelines/workflow.md` for the full process and `guidelines/roles/` for role-specific guides.
+Optional services (Sentry, PostHog, Telegram, MPP) degrade gracefully when keys are missing.
 
 ## Deploy
 
-Push to `main` for automatic Vercel deployment. The CI pipeline runs lint, format check, typecheck, tests, and build on every push and PR. Claude Code automatically reviews PRs when `ANTHROPIC_API_KEY` is configured.
+Push to `main` for automatic Vercel deployment. CI runs lint, format check, typecheck, tests, and build on every push and PR. Claude Code automatically reviews PRs when configured.
 
 ## Prerequisites
 
 - [Bun](https://bun.sh/) 1.3+
-- [Node.js](https://nodejs.org/) 20.19+
-- [Vercel CLI](https://vercel.com/cli) (optional, for setup)
-- [Neon CLI](https://neon.tech/docs/reference/neon-cli) (optional, for setup)
-- [jq](https://jqlang.github.io/jq/) (required if using Neon setup step)
+- [Node.js](https://nodejs.org/) 24+
+- AWS account with ECS, KMS, and CloudWatch configured
+- Neon Postgres database
