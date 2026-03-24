@@ -19,7 +19,7 @@ Jobs survive AWS Spot interruptions: the runner checkpoints its work and Dobby a
 ```bash
 curl -X POST https://dobby.suverenum.ai/api/v1/jobs \
   -H "Content-Type: application/json" \
-  -H "MPP-Token: <your-mpp-preauth-token>" \
+  -H "Authorization: Bearer <your-api-token>" \
   -d '{
     "repository": "https://github.com/your-org/your-repo",
     "task": "Add input validation to the /api/users endpoint using Zod",
@@ -160,6 +160,7 @@ Copy `.env.example` to `apps/web/.env.local`.
 | `ECS_SECURITY_GROUPS`       | Yes      | Comma-separated security group IDs       |
 | `KMS_KEY_ID`                | Yes      | KMS key ID for secret encryption         |
 | `BEDROCK_MODEL_ID`          | No       | Bedrock model ID (default: Claude Opus 4)|
+| `DOBBY_API_TOKEN`           | No       | Bearer token for API auth (skips MPP)    |
 | `MPP_ENDPOINT`              | No       | MPP API endpoint (dev mode if missing)   |
 | `MPP_API_KEY`               | No       | MPP API key                              |
 | `SESSION_SECRET`            | No       | HMAC key for admin session cookies       |

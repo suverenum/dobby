@@ -43,6 +43,9 @@ const envSchema = z.object({
 	// Dobby — LLM (Bedrock via existing AWS credentials)
 	BEDROCK_MODEL_ID: z.string().default("us.anthropic.claude-opus-4-6-v1"),
 
+	// Dobby — API authentication
+	DOBBY_API_TOKEN: z.string().optional(),
+
 	// Dobby — MPP
 	MPP_ENDPOINT: z.string().optional(),
 	MPP_API_KEY: z.string().optional(),

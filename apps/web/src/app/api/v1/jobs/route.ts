@@ -95,24 +95,53 @@ export async function POST(request: NextRequest) {
 		}
 	}
 
-	// MPP-Token validation
+	// Authentication: Bearer token or MPP-Token
+	const env = getEnv();
+	const authHeader = request.headers.get("Authorization");
 	const mppToken = request.headers.get("MPP-Token");
-	if (!mppToken) {
-		return NextResponse.json({ error: "MPP-Token header is required" }, { status: 402 });
+
+	// Bearer token auth (simple API token)
+	if (env.DOBBY_API_TOKEN) {
+		const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+		if (bearerToken === env.DOBBY_API_TOKEN) {
+			// Authenticated via API token — skip MPP validation
+		} else if (!mppToken) {
+			return NextResponse.json(
+				{ error: "Authorization required. Provide Bearer token or MPP-Token header." },
+				{ status: 401 },
+			);
+		}
 	}
 
-	const env = getEnv();
+	// MPP-Token validation (required if not authenticated via Bearer token)
+	const isApiTokenAuth =
+		env.DOBBY_API_TOKEN &&
+		authHeader?.startsWith("Bearer ") &&
+		authHeader.slice(7) === env.DOBBY_API_TOKEN;
+
+	if (!isApiTokenAuth && !mppToken) {
+		return NextResponse.json({ error: "MPP-Token header is required" }, { status: 402 });
+	}
 
 	// Validate MPP preauthorization covers max budget
 	const maxBudget = calculateMaxBudget(env.DOBBY_HOURLY_RATE, env.DOBBY_MAX_JOB_HOURS);
 	let mppResult: Awaited<ReturnType<typeof validatePreauthorization>>;
-	try {
-		mppResult = await validatePreauthorization(mppToken, maxBudget);
-	} catch (error) {
-		if (error instanceof MppError) {
-			return NextResponse.json({ error: error.message }, { status: 402 });
+	if (isApiTokenAuth && !mppToken) {
+		// API token auth — skip MPP, use placeholder channel
+		mppResult = {
+			valid: true,
+			channelId: `api-token-${crypto.randomUUID().slice(0, 8)}`,
+			authorizedAmount: maxBudget,
+		};
+	} else {
+		try {
+			mppResult = await validatePreauthorization(mppToken!, maxBudget);
+		} catch (error) {
+			if (error instanceof MppError) {
+				return NextResponse.json({ error: error.message }, { status: 402 });
+			}
+			throw error;
 		}
-		throw error;
 	}
 
 	if (!mppResult.valid) {
