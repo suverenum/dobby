@@ -36,3 +36,7 @@ storybook-static/
 
 # ralphex progress logs
 .ralphex/progress/
+
+# Dolt database files (added by bd init)
+.dolt/
+*.db
