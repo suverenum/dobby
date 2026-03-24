@@ -12,6 +12,54 @@ Ephemeral AI coding service. POST a task + a GitHub repo, get back a pull reques
 
 Jobs survive AWS Spot interruptions: the runner checkpoints its work and Dobby auto-resumes on a new container.
 
+## Quick Start
+
+### Submit a job
+
+```bash
+curl -X POST https://dobby.suverenum.ai/api/v1/jobs \
+  -H "Content-Type: application/json" \
+  -H "MPP-Token: <your-mpp-preauth-token>" \
+  -d '{
+    "repository": "https://github.com/your-org/your-repo",
+    "task": "Add input validation to the /api/users endpoint using Zod",
+    "gitToken": "ghp_xxxxxxxxxxxx"
+  }'
+```
+
+Response:
+
+```json
+{ "id": "db_abc123", "status": "provisioning" }
+```
+
+### Poll for status
+
+```bash
+curl https://dobby.suverenum.ai/api/v1/jobs/db_abc123
+```
+
+Response (when complete):
+
+```json
+{
+  "id": "db_abc123",
+  "status": "completed",
+  "prUrl": "https://github.com/your-org/your-repo/pull/42",
+  "startedAt": "2026-03-24T10:00:00Z",
+  "finishedAt": "2026-03-24T10:08:30Z",
+  "costFlops": 15
+}
+```
+
+### Optional fields
+
+| Field           | Description                                              |
+| --------------- | -------------------------------------------------------- |
+| `baseBranch`    | Branch to base work on (default: `main`)                 |
+| `existingPrUrl` | Push to an existing PR instead of creating a new one     |
+| `secrets`       | Key-value env vars passed to the runner (encrypted)      |
+
 ## Architecture
 
 ```
