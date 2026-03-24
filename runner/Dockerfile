@@ -28,24 +28,46 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     mypy \
     black
 
-# Install Claude Code CLI and OpenAI Codex CLI
-RUN npm install -g @anthropic-ai/claude-code @openai/codex \
-  && CLAUDE_REAL=$(which claude) \
-  && mv "${CLAUDE_REAL}" "${CLAUDE_REAL}-real" \
-  && printf '#!/usr/bin/env bash\nexec "%s-real" --bare "$@"\n' "${CLAUDE_REAL}" > "${CLAUDE_REAL}" \
-  && chmod +x "${CLAUDE_REAL}"
+# Install OpenCode CLI
+RUN npm install -g opencode-ai
 
-# Install Ralphex
+# Install dolt (required by beads)
 RUN ARCH=$(dpkg --print-architecture) && \
-    RALPHEX_VERSION=$(curl -sf https://api.github.com/repos/umputun/ralphex/releases/latest | jq -r .tag_name) && \
-    curl -fsSL "https://github.com/umputun/ralphex/releases/download/${RALPHEX_VERSION}/ralphex_${RALPHEX_VERSION#v}_linux_${ARCH}.tar.gz" \
-    | tar -xz -C /usr/local/bin ralphex && \
-    chmod +x /usr/local/bin/ralphex
+    curl -fsSL "https://github.com/dolthub/dolt/releases/latest/download/dolt-linux-${ARCH}.tar.gz" \
+    | tar -xz --strip-components=1 -C /usr/local dolt-linux-${ARCH}/bin/dolt
+
+# Install beads (bd) for issue tracking
+RUN ARCH=$(dpkg --print-architecture) && \
+    BD_VERSION=$(curl -sf https://api.github.com/repos/steveyegge/beads/releases/latest | jq -r .tag_name) && \
+    curl -fsSL "https://github.com/steveyegge/beads/releases/download/${BD_VERSION}/beads_${BD_VERSION#v}_linux_${ARCH}.tar.gz" \
+    | tar -xz -C /usr/local/bin bd && \
+    chmod +x /usr/local/bin/bd
+
+# Install beads viewer (bv) for robot triage
+RUN ARCH=$(dpkg --print-architecture) && \
+    BV_VERSION=$(curl -sf https://api.github.com/repos/Dicklesworthstone/beads_viewer/releases/latest | jq -r .tag_name) && \
+    curl -fsSL "https://github.com/Dicklesworthstone/beads_viewer/releases/download/${BV_VERSION}/bv_${BV_VERSION#v}_linux_${ARCH}.tar.gz" \
+    | tar -xz -C /usr/local/bin bv && \
+    chmod +x /usr/local/bin/bv
 
 # Create non-root user and workspace
 RUN useradd -m -s /bin/bash dobby \
   && mkdir -p /workspace \
   && chown dobby:dobby /workspace
+
+# Clone myhyperpowers and install skills/agents for OpenCode
+RUN git clone --depth=1 https://github.com/dpolishuk/myhyperpowers.git /opt/myhyperpowers 2>&1 || \
+    (echo "Clone failed, retrying..." && sleep 2 && git clone --depth=1 https://github.com/dpolishuk/myhyperpowers.git /opt/myhyperpowers)
+
+# Install hyperpowers skills and agents to dobby's OpenCode config
+RUN HP=/opt/myhyperpowers && OC=/home/dobby/.config/opencode \
+  && mkdir -p "$OC/skills" "$OC/agents" "$OC/commands" "$OC/plugins" \
+  && for d in "$HP"/.opencode/skills/hyperpowers-*/; do [ -d "$d" ] && cp -R "$d" "$OC/skills/"; done \
+  && [ -d "$HP/.opencode/skills/beads-triage" ] && cp -R "$HP/.opencode/skills/beads-triage" "$OC/skills/" || true \
+  && for f in "$HP"/.opencode/agents/*.md; do [ -f "$f" ] && cp "$f" "$OC/agents/"; done \
+  && for f in "$HP"/.opencode/commands/*.md; do [ -f "$f" ] && cp "$f" "$OC/commands/"; done \
+  && for f in "$HP"/.opencode/plugins/*.ts; do [ -f "$f" ] && cp "$f" "$OC/plugins/"; done || true \
+  && chown -R dobby:dobby /home/dobby/.config
 
 # Copy entrypoint
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh

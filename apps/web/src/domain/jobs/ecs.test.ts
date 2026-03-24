@@ -115,7 +115,7 @@ describe("ecs", () => {
 			// Verify resource overrides (4 vCPU = 4096 CPU units, 16 GB = 16384 MiB)
 			expect(input.overrides.cpu).toBe("4096");
 			expect(input.overrides.memory).toBe("16384");
-			expect(input.overrides.ephemeralStorage.sizeInGiB).toBe(20);
+			expect(input.overrides.ephemeralStorage.sizeInGiB).toBe(21);
 		});
 
 		it("injects correct container environment variables", async () => {

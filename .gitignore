@@ -34,9 +34,12 @@ storybook-static/
 # vercel
 .vercel
 
-# ralphex progress logs
-.ralphex/progress/
+# opencode
+.opencode/
 
 # Dolt database files (added by bd init)
 .dolt/
 *.db
+
+# bv (beads viewer) local config and caches
+.bv/

@@ -77,13 +77,15 @@ export async function provisionTask(
 		{ name: "DOBBY_EXISTING_PR_URL", value: job.existingPrUrl ?? "" },
 	];
 
-	// Inject operator-managed LLM API keys
-	if (env.ANTHROPIC_API_KEY) {
-		containerEnv.push({ name: "ANTHROPIC_API_KEY", value: env.ANTHROPIC_API_KEY });
+	// Inject AWS credentials for Bedrock (reuse existing AWS creds)
+	if (env.AWS_ACCESS_KEY_ID) {
+		containerEnv.push({ name: "AWS_ACCESS_KEY_ID", value: env.AWS_ACCESS_KEY_ID });
 	}
-	if (env.OPENAI_API_KEY) {
-		containerEnv.push({ name: "OPENAI_API_KEY", value: env.OPENAI_API_KEY });
+	if (env.AWS_SECRET_ACCESS_KEY) {
+		containerEnv.push({ name: "AWS_SECRET_ACCESS_KEY", value: env.AWS_SECRET_ACCESS_KEY });
 	}
+	containerEnv.push({ name: "AWS_REGION", value: env.AWS_REGION });
+	containerEnv.push({ name: "BEDROCK_MODEL_ID", value: env.BEDROCK_MODEL_ID });
 
 	// Inject caller secrets as additional env vars (block reserved names)
 	if (decryptedSecrets.secrets) {

@@ -31,10 +31,10 @@ handle_sigterm() {
   log "SIGTERM received — pushing checkpoint and exiting"
   INTERRUPTED=1
 
-  # Kill ralphex if running
-  if [[ -n "${RALPHEX_PID:-}" ]]; then
-    kill "${RALPHEX_PID}" 2>/dev/null || true
-    wait "${RALPHEX_PID}" 2>/dev/null || true
+  # Kill opencode if running
+  if [[ -n "${OPENCODE_PID:-}" ]]; then
+    kill "${OPENCODE_PID}" 2>/dev/null || true
+    wait "${OPENCODE_PID}" 2>/dev/null || true
   fi
 
   cd "${WORK_DIR}" 2>/dev/null || exit 1
@@ -115,45 +115,111 @@ fi
 
 [[ $INTERRUPTED -eq 1 ]] && exit 0
 
-# ─── Phase 2: Execute with Ralphex ───────────────────────────────────────────
+# ─── Phase 2: Execute with OpenCode + Hyperpowers ────────────────────────────
 
 callback "executing"
 
-# Verify LLM credentials are available
-if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
-  log "ANTHROPIC_API_KEY is set (${#ANTHROPIC_API_KEY} chars)"
+# Verify AWS/Bedrock credentials are available
+if [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]; then
+  log "AWS_ACCESS_KEY_ID is set"
 else
-  log "WARNING: ANTHROPIC_API_KEY is not set"
+  log "WARNING: AWS_ACCESS_KEY_ID is not set — Bedrock auth may fail"
 fi
 
-log "Starting Ralphex..."
+log "Configuring OpenCode for Bedrock..."
 
+# Determine the Bedrock model to use
+BEDROCK_MODEL="${BEDROCK_MODEL_ID:-us.anthropic.claude-opus-4-6-v1}"
 
-# Verify Claude Code can authenticate
-log "Testing Claude Code auth..."
-claude --version 2>&1 || log "WARNING: claude --version failed"
-claude -p "respond with just the word hello" --output-format text 2>&1 | head -5 || log "WARNING: claude test prompt failed"
+# Generate opencode.json for this project with Bedrock provider config
+cat > "${WORK_DIR}/opencode.json" <<OCCONFIG
+{
+  "\$schema": "https://opencode.ai/config.json",
+  "model": "amazon-bedrock/${BEDROCK_MODEL}",
+  "provider": {
+    "amazon-bedrock": {
+      "options": {
+        "region": "${AWS_REGION:-us-east-1}"
+      }
+    }
+  },
+  "permission": {
+    "bash": "allow",
+    "todowrite": "allow",
+    "todoread": "allow",
+    "skill": "allow",
+    "webfetch": "allow",
+    "question": "allow",
+    "read": "allow",
+    "edit": "allow",
+    "write": "allow",
+    "grep": "allow",
+    "glob": "allow",
+    "list": "allow",
+    "lsp": "allow",
+    "patch": "allow"
+  }
+}
+OCCONFIG
 
-# Write task as a plan file for Ralphex
-PLAN_FILE="/tmp/dobby-plan.md"
-cat > "${PLAN_FILE}" <<PLAN
-# Task: ${DOBBY_JOB_ID}
+log "OpenCode configured with model: amazon-bedrock/${BEDROCK_MODEL}"
+
+# Initialize beads for this repo if not already set up
+if [[ ! -d "${WORK_DIR}/.beads" ]]; then
+  log "Initializing beads tracker"
+  bd init 2>/dev/null || log "WARNING: bd init failed (may already exist)"
+fi
+
+# Create a bd epic from the task description
+log "Creating bd epic from task..."
+EPIC_OUTPUT=$(bd create "Dobby Task: ${DOBBY_JOB_ID}" \
+  --type epic \
+  --priority 1 \
+  --design "## Task
 
 ${DOBBY_TASK}
-PLAN
 
-# Run Ralphex with full workflow (tasks + multi-agent review)
-ralphex "${PLAN_FILE}" 2>&1 | tee /tmp/ralphex-output.log &
+## Success Criteria
 
-RALPHEX_PID=$!
+- [ ] All requirements from the task description are implemented
+- [ ] Tests pass
+- [ ] Code compiles without errors" \
+  --json 2>/dev/null || echo "{}")
 
-# Wait for Ralphex, but allow SIGTERM to interrupt
-wait $RALPHEX_PID || {
+EPIC_ID=$(echo "${EPIC_OUTPUT}" | jq -r '.id // empty' 2>/dev/null || echo "")
+
+if [[ -n "${EPIC_ID}" ]]; then
+  log "Created epic: ${EPIC_ID}"
+else
+  log "WARNING: Failed to create epic, OpenCode will handle task directly"
+fi
+
+log "Starting OpenCode with execute-ralph..."
+
+# Build the prompt — pass the epic ID explicitly so execute-ralph works on the right epic
+if [[ -n "${EPIC_ID}" ]]; then
+  RALPH_PROMPT="Execute epic ${EPIC_ID} using the execute-ralph skill. The epic contains the full task description and success criteria. Use: /hyperpowers:execute-ralph
+
+Epic ID: ${EPIC_ID}
+Run 'bd show ${EPIC_ID}' to load the epic details before starting Phase 0."
+else
+  # Fallback: pass the task directly if epic creation failed
+  RALPH_PROMPT="Execute the following task using the execute-ralph skill. First create a bd epic from this task, then run /hyperpowers:execute-ralph
+
+Task: ${DOBBY_TASK}"
+fi
+
+opencode run "${RALPH_PROMPT}" 2>&1 | tee /tmp/opencode-output.log &
+
+OPENCODE_PID=$!
+
+# Wait for OpenCode, but allow SIGTERM to interrupt
+wait $OPENCODE_PID || {
   EXIT_CODE=$?
   if [[ $INTERRUPTED -eq 1 ]]; then
     exit 0
   fi
-  log "Ralphex exited with code ${EXIT_CODE}"
+  log "OpenCode exited with code ${EXIT_CODE}"
 }
 
 [[ $INTERRUPTED -eq 1 ]] && exit 0
@@ -162,6 +228,9 @@ wait $RALPHEX_PID || {
 
 callback "finalizing"
 log "Finalizing — pushing changes"
+
+# Remove generated opencode.json before committing (don't pollute the repo)
+rm -f "${WORK_DIR}/opencode.json"
 
 # Stage and commit any remaining changes
 git add -A

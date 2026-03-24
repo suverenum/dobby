@@ -40,9 +40,8 @@ const envSchema = z.object({
 	ECS_SECURITY_GROUPS: z.string().optional(),
 	KMS_KEY_ID: z.string().optional(),
 
-	// Dobby — LLM (operator-managed)
-	ANTHROPIC_API_KEY: z.string().optional(),
-	OPENAI_API_KEY: z.string().optional(),
+	// Dobby — LLM (Bedrock via existing AWS credentials)
+	BEDROCK_MODEL_ID: z.string().default("us.anthropic.claude-opus-4-6-v1"),
 
 	// Dobby — MPP
 	MPP_ENDPOINT: z.string().optional(),
