@@ -23,7 +23,8 @@ curl -X POST https://dobby.suverenum.ai/api/v1/jobs \
   -d '{
     "repository": "https://github.com/your-org/your-repo",
     "task": "Add input validation to the /api/users endpoint using Zod",
-    "gitToken": "ghp_xxxxxxxxxxxx"
+    "gitToken": "ghp_xxxxxxxxxxxx",
+    "baseBranch": "main"
   }'
 ```
 
