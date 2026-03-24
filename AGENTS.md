@@ -162,6 +162,22 @@ Run `bun run storybook` to develop components visually.
 | `turbo.json`                  | Task orchestration config                      |
 | `packages/tsconfig/base.json` | Shared strict TypeScript config                |
 
+## Memory (Supermemory)
+
+Before starting work, search supermemory for relevant context:
+
+- `search` with the task description to find related past work
+- `list` to review recent memories
+
+After these events, save a memory:
+
+- **PR opened/merged**: branch name, PR URL, summary of what changed (type: `architecture` or `project-config`)
+- **Bug fixed**: root cause and fix (type: `error-solution`)
+- **New convention discovered**: the pattern and why (type: `learned-pattern`)
+- **Config changed**: what changed and the new values (type: `project-config`)
+
+Keep memories concise. Update or forget stale memories rather than adding duplicates.
+
 ## Do NOT
 
 - Add dependencies without checking if they're already available in the workspace
