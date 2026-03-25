@@ -178,18 +178,35 @@ BEDROCK_CACHE_WRITE_PRICE_PER_1M: z.coerce.number().default(6.25),
 
 ### 6.4. Runner Token Extraction
 
-After OpenCode finishes, the runner extracts token usage from OpenCode's session data. OpenCode stores session data in `.opencode/sessions/`. The runner parses the latest session file for token totals.
+OpenCode's `run --format json` outputs structured JSON events to stdout. Each LLM step emits a `step_finish` event with token counts:
 
-In `runner/entrypoint.sh`, after OpenCode exits:
+```json
+{"type":"step_finish","sessionID":"ses_xxx","part":{
+  "cost":0.143,
+  "tokens":{"total":22976,"input":2,"output":5,"reasoning":0,"cache":{"read":0,"write":22969}}
+}}
+```
+
+The runner captures the JSON stream, sums all `step_finish` token counts, and includes them in the final callback.
+
+In `runner/entrypoint.sh`, replace the current `opencode run` invocation:
 
 ```bash
-# Extract token usage from OpenCode session data
-TOKEN_DATA=$(find "${WORK_DIR}/.opencode/sessions" -name "*.json" -type f -exec cat {} + 2>/dev/null \
+# Run OpenCode in JSON mode to capture token usage
+opencode run --format json "${RALPH_PROMPT}" 2>/dev/null | tee /tmp/opencode-output.json &
+
+OPENCODE_PID=$!
+wait $OPENCODE_PID || { ... }
+
+# Extract total token usage from all step_finish events
+TOKEN_DATA=$(grep '"type":"step_finish"' /tmp/opencode-output.json \
   | jq -s '{
-    inputTokens: [.[].messages[]?.usage?.input_tokens // 0] | add,
-    outputTokens: [.[].messages[]?.usage?.output_tokens // 0] | add,
-    cacheReadTokens: [.[].messages[]?.usage?.cache_read_input_tokens // 0] | add,
-    cacheWriteTokens: [.[].messages[]?.usage?.cache_creation_input_tokens // 0] | add
+    inputTokens: [.[].part.tokens.input // 0] | add,
+    outputTokens: [.[].part.tokens.output // 0] | add,
+    reasoningTokens: [.[].part.tokens.reasoning // 0] | add,
+    cacheReadTokens: [.[].part.tokens.cache.read // 0] | add,
+    cacheWriteTokens: [.[].part.tokens.cache.write // 0] | add,
+    cost: [.[].part.cost // 0] | add
   }' 2>/dev/null || echo "{}")
 
 INPUT_TOKENS=$(echo "${TOKEN_DATA}" | jq -r '.inputTokens // 0')
@@ -198,19 +215,7 @@ CACHE_READ_TOKENS=$(echo "${TOKEN_DATA}" | jq -r '.cacheReadTokens // 0')
 CACHE_WRITE_TOKENS=$(echo "${TOKEN_DATA}" | jq -r '.cacheWriteTokens // 0')
 ```
 
-Then include in the callback:
-
-```bash
-callback "completed" \
-  "\"lastCheckpointCommit\": \"${LAST_COMMIT}\"" \
-  "\"prUrl\": \"${PR_URL}\"" \
-  "\"inputTokens\": ${INPUT_TOKENS}" \
-  "\"outputTokens\": ${OUTPUT_TOKENS}" \
-  "\"cacheReadTokens\": ${CACHE_READ_TOKENS}" \
-  "\"cacheWriteTokens\": ${CACHE_WRITE_TOKENS}"
-```
-
-**Note:** The exact session file format needs to be verified against OpenCode's actual output. If OpenCode doesn't store per-message token usage in session files, we fall back to parsing stdout logs for a `total tokens` summary line.
+**Verified:** OpenCode's `--format json` reliably emits `step_finish` events with `cost` and `tokens` fields for every LLM call, including subagent calls. The `cost` field is OpenCode's own cost calculation based on the model's pricing.
 
 ### 6.5. Callback Route Processing
 
