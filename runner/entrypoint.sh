@@ -88,6 +88,9 @@ echo "https://x-access-token:${DOBBY_GIT_TOKEN}@github.com" > "${HOME}/.git-cred
 git config --global user.email "dobby@suverenum.ai"
 git config --global user.name "Dobby"
 
+# Configure GitHub CLI auth (used by OpenCode for gh commands)
+export GH_TOKEN="${DOBBY_GIT_TOKEN}"
+
 # Clone the repo
 git clone --depth=50 --branch "${DOBBY_BASE_BRANCH}" \
   "${DOBBY_REPOSITORY}" "${WORK_DIR}"
