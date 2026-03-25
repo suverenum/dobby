@@ -4,7 +4,8 @@ import { z } from "zod/v4";
 import { getDb } from "../../../../db";
 import { jobs } from "../../../../db/schema";
 import {
-	calculateJobCost,
+	calculateBedrockCost,
+	calculateContainerCost,
 	isActiveStatus,
 	isTerminalStatus,
 	isValidJobId,
@@ -12,7 +13,6 @@ import {
 	resumeJob,
 } from "../../../../domain/jobs";
 import { getEnv } from "../../../../lib/env";
-import { settlePayment } from "../../../../lib/mpp";
 import { verifyBearerToken } from "../../../../lib/session";
 import { sendNotification } from "../../../../lib/telegram";
 
@@ -26,6 +26,11 @@ const callbackSchema = z.object({
 		.optional(),
 	lastCheckpointCommit: z.string().optional(),
 	ecsTaskArn: z.string().optional(),
+	// Token usage telemetry
+	inputTokens: z.number().int().nonnegative().optional(),
+	outputTokens: z.number().int().nonnegative().optional(),
+	cacheReadTokens: z.number().int().nonnegative().optional(),
+	cacheWriteTokens: z.number().int().nonnegative().optional(),
 });
 
 export type CallbackInput = z.infer<typeof callbackSchema>;
@@ -154,30 +159,91 @@ export async function POST(request: NextRequest) {
 		updateFields.lastCheckpointCommit = input.lastCheckpointCommit;
 	}
 
-	// On terminal status: set finishedAt, calculate cost, settle payment, clear encrypted secrets
+	// On terminal status: set finishedAt, clear encrypted secrets
 	if (isTerminalStatus(input.status)) {
 		updateFields.finishedAt = now;
-
-		// Calculate cost if job was started
-		let cost = 0;
-		if (job.startedAt) {
-			const durationMs = now.getTime() - new Date(job.startedAt).getTime();
-			cost = calculateJobCost(durationMs, env.DOBBY_HOURLY_RATE, env.DOBBY_MAX_JOB_HOURS);
-			updateFields.costFlops = cost.toString();
-		}
 
 		// Delete encrypted secrets on terminal status
 		updateFields.encryptedGitCredentials = "";
 		updateFields.encryptedSecrets = null;
 	}
 
+	// Token accumulation: accumulate tokens from this callback with existing values.
+	// Must happen after stale-callback guards pass.
+	if (input.inputTokens !== undefined || input.outputTokens !== undefined) {
+		const existingInput = Number(job.inputTokens) || 0;
+		const existingOutput = Number(job.outputTokens) || 0;
+		const existingCacheRead = Number(job.cacheReadTokens) || 0;
+		const existingCacheWrite = Number(job.cacheWriteTokens) || 0;
+
+		const totalInput = existingInput + (input.inputTokens ?? 0);
+		const totalOutput = existingOutput + (input.outputTokens ?? 0);
+		const totalCacheRead = existingCacheRead + (input.cacheReadTokens ?? 0);
+		const totalCacheWrite = existingCacheWrite + (input.cacheWriteTokens ?? 0);
+
+		updateFields.inputTokens = totalInput;
+		updateFields.outputTokens = totalOutput;
+		updateFields.cacheReadTokens = totalCacheRead;
+		updateFields.cacheWriteTokens = totalCacheWrite;
+
+		// Always recalculate Bedrock cost from accumulated totals (avoids float drift)
+		const bedrockCost = calculateBedrockCost(
+			{
+				inputTokens: totalInput,
+				outputTokens: totalOutput,
+				cacheReadTokens: totalCacheRead,
+				cacheWriteTokens: totalCacheWrite,
+			},
+			{
+				inputPer1M: env.BEDROCK_INPUT_PRICE_PER_1M,
+				outputPer1M: env.BEDROCK_OUTPUT_PRICE_PER_1M,
+				cacheReadPer1M: env.BEDROCK_CACHE_READ_PRICE_PER_1M,
+				cacheWritePer1M: env.BEDROCK_CACHE_WRITE_PRICE_PER_1M,
+			},
+		);
+		updateFields.bedrockCostUsd = bedrockCost.toFixed(6);
+
+		// Container cost from total duration (startedAt to now/finishedAt)
+		const jobStartedAt = job.startedAt ?? (updateFields.startedAt as Date | undefined);
+		if (jobStartedAt) {
+			const finishedAt = (updateFields.finishedAt as Date | undefined) ?? now;
+			const durationMs = finishedAt.getTime() - new Date(jobStartedAt).getTime();
+			const containerCost = calculateContainerCost(
+				durationMs,
+				env.DOBBY_VM_CPU,
+				env.DOBBY_VM_CPU * 4,
+				1,
+				{
+					vcpuPerHour: env.FARGATE_SPOT_VCPU_PER_HOUR,
+					memGbPerHour: env.FARGATE_SPOT_MEM_GB_PER_HOUR,
+					ephemeralGbPerHour: env.FARGATE_SPOT_EPHEMERAL_GB_PER_HOUR,
+				},
+			);
+			updateFields.containerCostUsd = containerCost.toFixed(6);
+			updateFields.costUsd = (bedrockCost + containerCost).toFixed(6);
+		} else {
+			updateFields.costUsd = bedrockCost.toFixed(6);
+		}
+	}
+
 	// For SIGTERM callbacks on terminal jobs (stopped/timed_out), only persist
-	// the runner's last checkpoint and PR URL without changing the status.
-	// This preserves the review surface per the spec.
+	// the runner's last checkpoint, PR URL, and token data without changing the status.
 	if (terminalSigtermCallback) {
 		const sigtermFields: Record<string, unknown> = {};
 		if (input.prUrl) sigtermFields.prUrl = input.prUrl;
 		if (input.lastCheckpointCommit) sigtermFields.lastCheckpointCommit = input.lastCheckpointCommit;
+		// Also persist token accumulation on SIGTERM
+		if (updateFields.inputTokens !== undefined) {
+			sigtermFields.inputTokens = updateFields.inputTokens;
+			sigtermFields.outputTokens = updateFields.outputTokens;
+			sigtermFields.cacheReadTokens = updateFields.cacheReadTokens;
+			sigtermFields.cacheWriteTokens = updateFields.cacheWriteTokens;
+			sigtermFields.bedrockCostUsd = updateFields.bedrockCostUsd;
+			if (updateFields.containerCostUsd !== undefined) {
+				sigtermFields.containerCostUsd = updateFields.containerCostUsd;
+			}
+			sigtermFields.costUsd = updateFields.costUsd;
+		}
 		if (Object.keys(sigtermFields).length > 0) {
 			await db.update(jobs).set(sigtermFields).where(eq(jobs.id, input.jobId));
 		}
@@ -207,15 +273,6 @@ export async function POST(request: NextRequest) {
 			.where(eq(jobs.id, input.jobId));
 	}
 
-	// Settle MPP payment after DB update succeeds (non-blocking — errors logged but not fatal)
-	if (isTerminalStatus(input.status) && job.mppChannelId) {
-		const authorizedFlops = Number(job.authorizedFlops) || 0;
-		const cost = updateFields.costFlops ? Number(updateFields.costFlops) : 0;
-		settlePayment(job.mppChannelId, cost, authorizedFlops).catch((error) => {
-			console.error(`Failed to settle MPP payment for job ${job.id}:`, error);
-		});
-	}
-
 	// On interrupted status: trigger resume flow
 	if (input.status === "interrupted") {
 		try {
@@ -230,7 +287,9 @@ export async function POST(request: NextRequest) {
 	const updatedJob = {
 		...job,
 		prUrl: (input.prUrl ?? job.prUrl) as string | null,
-		costFlops: (updateFields.costFlops as string) ?? job.costFlops,
+		inputTokens: (updateFields.inputTokens as number | undefined) ?? job.inputTokens,
+		outputTokens: (updateFields.outputTokens as number | undefined) ?? job.outputTokens,
+		costUsd: (updateFields.costUsd as string | undefined) ?? job.costUsd,
 		finishedAt: (updateFields.finishedAt as Date) ?? job.finishedAt,
 	};
 	sendNotification(updatedJob, input.status).catch(() => {});

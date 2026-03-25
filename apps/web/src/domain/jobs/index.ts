@@ -1,5 +1,13 @@
-export { calculateJobCost, calculateMaxBudget } from "./billing";
 export { calculateMaxConcurrentJobs, hasCapacity } from "./concurrency";
+export {
+	type BedrockPricing,
+	calculateBedrockCost,
+	calculateContainerCost,
+	type FargatePricing,
+	formatCostUsd,
+	formatTokenCount,
+	type TokenUsage,
+} from "./cost";
 export { type DecryptedSecrets, type ProvisionResult, provisionTask, stopTask } from "./ecs";
 export { generateJobId, isValidJobId } from "./id";
 export { resumeJob } from "./resume";

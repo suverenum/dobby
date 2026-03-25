@@ -16,18 +16,6 @@ vi.mock("../../../../domain/jobs/ecs", () => ({
 	_resetClient: vi.fn(),
 }));
 
-// Mock MPP
-const mockValidatePreauthorization = vi.fn();
-vi.mock("../../../../lib/mpp", () => ({
-	validatePreauthorization: (...args: unknown[]) => mockValidatePreauthorization(...args),
-	MppError: class MppError extends Error {
-		constructor(message: string) {
-			super(message);
-			this.name = "MppError";
-		}
-	},
-}));
-
 // Mock database
 const mockInsert = vi.fn();
 const mockValues = vi.fn();
@@ -80,6 +68,7 @@ describe("POST /v1/jobs", () => {
 		vi.stubEnv("DATABASE_URL", "postgres://user:pass@host:5432/db");
 		vi.stubEnv("KMS_KEY_ID", "arn:aws:kms:us-east-1:123:key/test");
 		vi.stubEnv("AWS_REGION", "us-east-1");
+		vi.stubEnv("DOBBY_API_TOKEN", "test-api-token");
 		mockEncrypt.mockReset();
 		mockDecrypt.mockReset();
 		mockInsert.mockReset();
@@ -87,7 +76,6 @@ describe("POST /v1/jobs", () => {
 		mockSelect.mockReset();
 		mockFrom.mockReset();
 		mockWhere.mockReset().mockImplementation(() => whereResult);
-		mockValidatePreauthorization.mockReset();
 		mockProvisionTask.mockReset();
 		mockUpdateSet.mockReset();
 		mockUpdateWhere.mockReset();
@@ -95,11 +83,6 @@ describe("POST /v1/jobs", () => {
 		mockDecrypt.mockResolvedValue("ghp_test123");
 		mockValues.mockResolvedValue(undefined);
 		whereResult = [{ count: 0 }];
-		mockValidatePreauthorization.mockResolvedValue({
-			valid: true,
-			channelId: "mpp-channel-123",
-			authorizedAmount: 600,
-		});
 		mockProvisionTask.mockResolvedValue({
 			taskArn: "arn:aws:ecs:us-east-1:123:task/cluster/abc123",
 			clusterArn: "arn:aws:ecs:us-east-1:123:cluster/test",
@@ -111,7 +94,7 @@ describe("POST /v1/jobs", () => {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
-				"MPP-Token": "mpp-test-token",
+				Authorization: "Bearer test-api-token",
 				...headers,
 			},
 			body: JSON.stringify(body),
@@ -154,7 +137,9 @@ describe("POST /v1/jobs", () => {
 		expect(insertedRow.repository).toBe("https://github.com/org/repo");
 		expect(insertedRow.encryptedGitCredentials).toBe("encrypted-base64");
 		expect(insertedRow.encryptedSecrets).toBe("encrypted-base64");
-		expect(insertedRow.authorizedFlops).toBe("600");
+		// No authorizedFlops or mppChannelId
+		expect(insertedRow.authorizedFlops).toBeUndefined();
+		expect(insertedRow.mppChannelId).toBeUndefined();
 	});
 
 	it("returns 400 for invalid JSON body", async () => {
@@ -163,7 +148,7 @@ describe("POST /v1/jobs", () => {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
-				"MPP-Token": "mpp-test-token",
+				Authorization: "Bearer test-api-token",
 			},
 			body: "not json",
 		});
@@ -248,19 +233,13 @@ describe("POST /v1/jobs", () => {
 		expect(res.status).toBe(201);
 	});
 
-	it("returns 402 when MPP-Token header is missing", async () => {
+	it("returns 401 when Bearer token is wrong", async () => {
 		const { POST } = await import("./route");
-		const req = new Request("http://localhost:3000/api/v1/jobs", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(validBody),
-		});
+		const req = createRequest(validBody, { Authorization: "Bearer wrong-token" });
 		// biome-ignore lint/suspicious/noExplicitAny: test helper
 		const res = await POST(req as any);
 
-		expect(res.status).toBe(402);
-		const json = await res.json();
-		expect(json.error).toContain("MPP-Token");
+		expect(res.status).toBe(401);
 	});
 
 	it("returns 429 when at capacity", async () => {
@@ -307,66 +286,7 @@ describe("POST /v1/jobs", () => {
 
 		const insertedRow = mockValues.mock.calls[0]![0] as Record<string, unknown>;
 		expect(insertedRow.encryptedSecrets).toBeNull();
-		// Only gitToken encrypted, not secrets
 		expect(mockEncrypt).toHaveBeenCalledTimes(1);
-	});
-
-	it("stores mppChannelId from MPP validation result", async () => {
-		mockValidatePreauthorization.mockResolvedValueOnce({
-			valid: true,
-			channelId: "channel-xyz",
-			authorizedAmount: 600,
-		});
-
-		const { POST } = await import("./route");
-		const req = createRequest(validBody);
-		// biome-ignore lint/suspicious/noExplicitAny: test helper
-		await POST(req as any);
-
-		const insertedRow = mockValues.mock.calls[0]![0] as Record<string, unknown>;
-		expect(insertedRow.mppChannelId).toBe("channel-xyz");
-	});
-
-	it("returns 402 when MPP preauthorization is invalid", async () => {
-		mockValidatePreauthorization.mockResolvedValueOnce({
-			valid: false,
-			channelId: "",
-			authorizedAmount: 0,
-		});
-
-		const { POST } = await import("./route");
-		const req = createRequest(validBody);
-		// biome-ignore lint/suspicious/noExplicitAny: test helper
-		const res = await POST(req as any);
-
-		expect(res.status).toBe(402);
-		const json = await res.json();
-		expect(json.error).toContain("MPP preauthorization insufficient");
-	});
-
-	it("returns 402 when MPP endpoint returns an error", async () => {
-		const { MppError } = await import("../../../../lib/mpp");
-		mockValidatePreauthorization.mockRejectedValueOnce(
-			new MppError("MPP preauthorization failed (402): Insufficient funds"),
-		);
-
-		const { POST } = await import("./route");
-		const req = createRequest(validBody);
-		// biome-ignore lint/suspicious/noExplicitAny: test helper
-		const res = await POST(req as any);
-
-		expect(res.status).toBe(402);
-		const json = await res.json();
-		expect(json.error).toContain("MPP preauthorization failed");
-	});
-
-	it("passes max budget to validatePreauthorization", async () => {
-		const { POST } = await import("./route");
-		const req = createRequest(validBody);
-		// biome-ignore lint/suspicious/noExplicitAny: test helper
-		await POST(req as any);
-
-		expect(mockValidatePreauthorization).toHaveBeenCalledWith("mpp-test-token", 600);
 	});
 
 	it("generates working branch from task when no existingPrUrl", async () => {

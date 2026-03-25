@@ -18,7 +18,6 @@ const envSchema = z.object({
 	CRON_SECRET: z.string().optional(),
 
 	// Dobby — Job config
-	DOBBY_HOURLY_RATE: z.coerce.number().positive().default(100),
 	DOBBY_MAX_JOB_HOURS: z.coerce.number().positive().default(6),
 	DOBBY_ACCOUNT_VCPU_LIMIT: z.coerce.number().positive().default(24),
 	DOBBY_VM_CPU: z.coerce.number().positive().default(4),
@@ -56,10 +55,6 @@ const envSchema = z.object({
 
 	// Dobby — API authentication
 	DOBBY_API_TOKEN: z.string().optional(),
-
-	// Dobby — MPP
-	MPP_ENDPOINT: z.string().optional(),
-	MPP_API_KEY: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

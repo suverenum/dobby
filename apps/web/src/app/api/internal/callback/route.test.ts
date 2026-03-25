@@ -14,12 +14,6 @@ vi.mock("../../../../domain/jobs/ecs", () => ({
 	stopTask: (...args: unknown[]) => mockStopTask(...args),
 }));
 
-// Mock MPP settlePayment
-const mockSettlePayment = vi.fn();
-vi.mock("../../../../lib/mpp", () => ({
-	settlePayment: (...args: unknown[]) => mockSettlePayment(...args),
-}));
-
 // Mock database
 const mockUpdate = vi.fn();
 const mockSet = vi.fn();
@@ -93,9 +87,13 @@ function makeJob(overrides: Record<string, unknown> = {}) {
 		ecsTaskArn: "arn:aws:ecs:us-east-1:123:task/cluster/task-id",
 		ecsClusterArn: "arn:aws:ecs:us-east-1:123:cluster/dobby",
 		logStreamName: null,
-		authorizedFlops: "600",
-		costFlops: null,
-		mppChannelId: "mpp-test",
+		inputTokens: null,
+		outputTokens: null,
+		cacheReadTokens: null,
+		cacheWriteTokens: null,
+		bedrockCostUsd: null,
+		containerCostUsd: null,
+		costUsd: null,
 		submittedAt: new Date("2026-03-21T10:00:00Z"),
 		startedAt: new Date("2026-03-21T10:01:00Z"),
 		finishedAt: null,
@@ -127,12 +125,6 @@ describe("POST /api/internal/callback", () => {
 		mockSelectWhere.mockReset().mockImplementation(() => selectResult);
 		mockDecrypt.mockReset();
 		mockProvisionTask.mockReset();
-		mockSettlePayment.mockReset().mockResolvedValue({
-			settled: true,
-			channelId: "mpp-test",
-			settledAmount: 0,
-			refundedAmount: 0,
-		});
 
 		selectResult = [makeJob()];
 	});
@@ -333,8 +325,6 @@ describe("POST /api/internal/callback", () => {
 		expect(updateData.finishedAt).toBeInstanceOf(Date);
 		expect(updateData.encryptedGitCredentials).toBe("");
 		expect(updateData.encryptedSecrets).toBeNull();
-		// Cost should be calculated
-		expect(updateData.costFlops).toBeDefined();
 	});
 
 	it("updates job status to failed and clears secrets", async () => {
@@ -353,9 +343,8 @@ describe("POST /api/internal/callback", () => {
 		expect(updateData.encryptedSecrets).toBeNull();
 	});
 
-	it("calculates cost on terminal status when job has startedAt", async () => {
-		const startedAt = new Date("2026-03-21T10:00:00Z");
-		selectResult = [makeJob({ status: "finalizing", startedAt })];
+	it("does not set token fields when no token data in callback", async () => {
+		setJobFinalizing();
 
 		const { POST } = await import("./route");
 		const req = createRequest(validCompletedBody);
@@ -363,21 +352,91 @@ describe("POST /api/internal/callback", () => {
 		await POST(req as any);
 
 		const updateData = mockSet.mock.calls[0]![0] as Record<string, unknown>;
-		// costFlops should be a string representation of the cost
-		expect(updateData.costFlops).toBeDefined();
-		expect(typeof updateData.costFlops).toBe("string");
+		expect(updateData.inputTokens).toBeUndefined();
+		expect(updateData.outputTokens).toBeUndefined();
 	});
 
-	it("does not calculate cost when job has no startedAt", async () => {
-		selectResult = [makeJob({ status: "finalizing", startedAt: null })];
-
+	it("accumulates token data when provided in callback", async () => {
+		setJobFinalizing();
 		const { POST } = await import("./route");
-		const req = createRequest(validCompletedBody);
+		const req = createRequest({
+			...validCompletedBody,
+			inputTokens: 50000,
+			outputTokens: 10000,
+			cacheReadTokens: 30000,
+			cacheWriteTokens: 5000,
+		});
 		// biome-ignore lint/suspicious/noExplicitAny: test helper
 		await POST(req as any);
 
 		const updateData = mockSet.mock.calls[0]![0] as Record<string, unknown>;
-		expect(updateData.costFlops).toBeUndefined();
+		expect(updateData.inputTokens).toBe(50000);
+		expect(updateData.outputTokens).toBe(10000);
+		expect(updateData.cacheReadTokens).toBe(30000);
+		expect(updateData.cacheWriteTokens).toBe(5000);
+		expect(updateData.bedrockCostUsd).toBeDefined();
+		expect(updateData.costUsd).toBeDefined();
+	});
+
+	it("accumulates tokens with existing values (incremental)", async () => {
+		selectResult = [
+			makeJob({
+				status: "finalizing",
+				inputTokens: 50000,
+				outputTokens: 10000,
+				cacheReadTokens: 20000,
+				cacheWriteTokens: 5000,
+			}),
+		];
+		const { POST } = await import("./route");
+		const req = createRequest({
+			...validCompletedBody,
+			inputTokens: 30000,
+			outputTokens: 5000,
+			cacheReadTokens: 10000,
+			cacheWriteTokens: 3000,
+		});
+		// biome-ignore lint/suspicious/noExplicitAny: test helper
+		await POST(req as any);
+
+		const updateData = mockSet.mock.calls[0]![0] as Record<string, unknown>;
+		expect(updateData.inputTokens).toBe(80000); // 50K + 30K
+		expect(updateData.outputTokens).toBe(15000); // 10K + 5K
+		expect(updateData.cacheReadTokens).toBe(30000); // 20K + 10K
+		expect(updateData.cacheWriteTokens).toBe(8000); // 5K + 3K
+	});
+
+	it("treats null existing tokens as zero for accumulation", async () => {
+		selectResult = [makeJob({ status: "finalizing" })]; // all token fields null
+		const { POST } = await import("./route");
+		const req = createRequest({
+			...validCompletedBody,
+			inputTokens: 100,
+			outputTokens: 200,
+		});
+		// biome-ignore lint/suspicious/noExplicitAny: test helper
+		await POST(req as any);
+
+		const updateData = mockSet.mock.calls[0]![0] as Record<string, unknown>;
+		expect(updateData.inputTokens).toBe(100);
+		expect(updateData.outputTokens).toBe(200);
+		expect(updateData.cacheReadTokens).toBe(0);
+		expect(updateData.cacheWriteTokens).toBe(0);
+	});
+
+	it("calculates bedrock cost from accumulated totals", async () => {
+		setJobFinalizing();
+		const { POST } = await import("./route");
+		const req = createRequest({
+			...validCompletedBody,
+			inputTokens: 1000000, // 1M input = $5
+			outputTokens: 0,
+		});
+		// biome-ignore lint/suspicious/noExplicitAny: test helper
+		await POST(req as any);
+
+		const updateData = mockSet.mock.calls[0]![0] as Record<string, unknown>;
+		expect(Number(updateData.bedrockCostUsd)).toBeCloseTo(5.0, 4);
 	});
 
 	it("stores prUrl when provided", async () => {
@@ -427,11 +486,7 @@ describe("POST /api/internal/callback", () => {
 		const res = await POST(req as any);
 
 		expect(res.status).toBe(200);
-
-		// Verify decrypt was called
 		expect(mockDecrypt).toHaveBeenCalledWith("encrypted-git-creds");
-
-		// Verify provisionTask was called
 		expect(mockProvisionTask).toHaveBeenCalledOnce();
 		const provisionArgs = mockProvisionTask.mock.calls[0]!;
 		expect(provisionArgs[0].lastCheckpointCommit).toBe("abc123");
@@ -460,12 +515,10 @@ describe("POST /api/internal/callback", () => {
 		// biome-ignore lint/suspicious/noExplicitAny: test helper
 		await POST(req as any);
 
-		// Verify both git creds and secrets were decrypted
 		expect(mockDecrypt).toHaveBeenCalledTimes(2);
 		expect(mockDecrypt).toHaveBeenCalledWith("encrypted-git-creds");
 		expect(mockDecrypt).toHaveBeenCalledWith("encrypted-secrets-blob");
 
-		// Verify provisionTask received decrypted secrets
 		const provisionArgs = mockProvisionTask.mock.calls[0]!;
 		expect(provisionArgs[1].secrets).toEqual({ API_KEY: "secret123" });
 	});
@@ -485,11 +538,7 @@ describe("POST /api/internal/callback", () => {
 		// biome-ignore lint/suspicious/noExplicitAny: test helper
 		await POST(req as any);
 
-		// First set call: initial status update to interrupted
-		// Second set call: CAS claim (interrupted -> provisioning) in resumeJob
-		// Third set call: final update with resumeCount + ECS ARN
 		expect(mockSet).toHaveBeenCalledTimes(3);
-
 		const claimUpdate = mockSet.mock.calls[1]![0] as Record<string, unknown>;
 		expect(claimUpdate.status).toBe("provisioning");
 	});
@@ -509,7 +558,6 @@ describe("POST /api/internal/callback", () => {
 		// biome-ignore lint/suspicious/noExplicitAny: test helper
 		await POST(req as any);
 
-		// ECS ARN is in the third set call (after CAS claim and provision)
 		const ecsUpdate = mockSet.mock.calls[2]![0] as Record<string, unknown>;
 		expect(ecsUpdate.ecsTaskArn).toBe("arn:aws:ecs:us-east-1:123:task/cluster/new-task-id");
 		expect(ecsUpdate.ecsClusterArn).toBe("arn:aws:ecs:us-east-1:123:cluster/dobby");
@@ -529,46 +577,6 @@ describe("POST /api/internal/callback", () => {
 
 		expect(res.status).toBe(200);
 		expect(consoleSpy).toHaveBeenCalled();
-		consoleSpy.mockRestore();
-	});
-
-	it("settles MPP payment on terminal status", async () => {
-		setJobFinalizing();
-		const { POST } = await import("./route");
-		const req = createRequest(validCompletedBody);
-		// biome-ignore lint/suspicious/noExplicitAny: test helper
-		await POST(req as any);
-
-		expect(mockSettlePayment).toHaveBeenCalledOnce();
-		const [channelId, cost, authorized] = mockSettlePayment.mock.calls[0]!;
-		expect(channelId).toBe("mpp-test");
-		expect(typeof cost).toBe("number");
-		expect(authorized).toBe(600);
-	});
-
-	it("does not settle MPP payment when mppChannelId is null", async () => {
-		selectResult = [makeJob({ status: "finalizing", mppChannelId: null })];
-		const { POST } = await import("./route");
-		const req = createRequest(validCompletedBody);
-		// biome-ignore lint/suspicious/noExplicitAny: test helper
-		await POST(req as any);
-
-		expect(mockSettlePayment).not.toHaveBeenCalled();
-	});
-
-	it("does not fail if MPP settlement throws", async () => {
-		setJobFinalizing();
-		mockSettlePayment.mockRejectedValueOnce(new Error("MPP down"));
-		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-		const { POST } = await import("./route");
-		const req = createRequest(validCompletedBody);
-		// biome-ignore lint/suspicious/noExplicitAny: test helper
-		const res = await POST(req as any);
-
-		expect(res.status).toBe(200);
-		// Allow async settlement error to propagate
-		await new Promise((resolve) => setTimeout(resolve, 10));
 		consoleSpy.mockRestore();
 	});
 
@@ -633,7 +641,6 @@ describe("POST /api/internal/callback", () => {
 		const res = await POST(req as any);
 
 		expect(res.status).toBe(200);
-		// Should not be rejected — this is the current task, not a stale one
 		expect(mockProvisionTask).toHaveBeenCalledOnce();
 	});
 
@@ -694,13 +701,11 @@ describe("POST /api/internal/callback", () => {
 		const json = await res.json();
 		expect(json.ok).toBe(true);
 
-		// Should persist prUrl and checkpoint without changing status
 		expect(mockSet).toHaveBeenCalledOnce();
 		const updateData = mockSet.mock.calls[0]![0] as Record<string, unknown>;
 		expect(updateData.prUrl).toBe("https://github.com/org/repo/pull/99");
 		expect(updateData.lastCheckpointCommit).toBe("deadbeef");
 		expect(updateData.status).toBeUndefined();
-		// Should NOT trigger resume flow
 		expect(mockProvisionTask).not.toHaveBeenCalled();
 	});
 
@@ -735,7 +740,6 @@ describe("POST /api/internal/callback", () => {
 		const res = await POST(req as any);
 
 		expect(res.status).toBe(200);
-		// No fields to persist, so no DB update
 		expect(mockSet).not.toHaveBeenCalled();
 		expect(mockProvisionTask).not.toHaveBeenCalled();
 	});
@@ -755,7 +759,6 @@ describe("POST /api/internal/callback", () => {
 		// biome-ignore lint/suspicious/noExplicitAny: test helper
 		await POST(req as any);
 
-		// First set call should NOT clear secrets (interrupted is not terminal)
 		const updateData = mockSet.mock.calls[0]![0] as Record<string, unknown>;
 		expect(updateData.encryptedGitCredentials).toBeUndefined();
 		expect(updateData.encryptedSecrets).toBeUndefined();

@@ -76,7 +76,7 @@ function makeJob(overrides: Record<string, unknown> = {}) {
 		ecsClusterArn: null,
 		logStreamName: null,
 		authorizedFlops: "100",
-		costFlops: "12.50",
+		costUsd: "12.50",
 		mppChannelId: null,
 		submittedAt: new Date("2026-03-20T10:00:00Z"),
 		startedAt: new Date("2026-03-20T10:01:00Z"),
@@ -116,7 +116,7 @@ describe("AdminJobsPage", () => {
 				repository: "https://github.com/acme/widget.git",
 				task: "Add dark mode support",
 				status: "completed",
-				costFlops: "25.00",
+				costUsd: "25.000000",
 				submittedAt: new Date("2026-03-20T10:00:00Z"),
 				startedAt: new Date("2026-03-20T10:01:00Z"),
 				finishedAt: new Date("2026-03-20T10:31:00Z"),
@@ -130,7 +130,7 @@ describe("AdminJobsPage", () => {
 		expect(screen.getByText("acme/widget")).toBeDefined();
 		expect(screen.getByText("Add dark mode support")).toBeDefined();
 		expect(screen.getByText("completed")).toBeDefined();
-		expect(screen.getByText("25.00")).toBeDefined();
+		expect(screen.getByText("$25.00")).toBeDefined();
 	});
 
 	it("truncates long task text", async () => {
@@ -188,8 +188,8 @@ describe("AdminJobsPage", () => {
 		expect(durationCell).toBeDefined();
 	});
 
-	it("shows dash for cost when costFlops is null", async () => {
-		mockJobRows = [makeJob({ costFlops: null, startedAt: null })];
+	it("shows dash for cost when costUsd is null", async () => {
+		mockJobRows = [makeJob({ costUsd: null, startedAt: null })];
 
 		const element = await AdminJobsPage({ searchParams: Promise.resolve({}) });
 		render(element);

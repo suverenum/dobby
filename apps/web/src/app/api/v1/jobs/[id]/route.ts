@@ -31,7 +31,13 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 		submittedAt: job.submittedAt,
 		startedAt: job.startedAt,
 		finishedAt: job.finishedAt,
-		costFlops: job.costFlops,
+		inputTokens: job.inputTokens,
+		outputTokens: job.outputTokens,
+		cacheReadTokens: job.cacheReadTokens,
+		cacheWriteTokens: job.cacheWriteTokens,
+		bedrockCostUsd: job.bedrockCostUsd,
+		containerCostUsd: job.containerCostUsd,
+		costUsd: job.costUsd,
 		resumeCount: job.resumeCount,
 	});
 }

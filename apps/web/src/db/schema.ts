@@ -19,10 +19,14 @@ export const jobs = pgTable("jobs", {
 	ecsClusterArn: text("ecs_cluster_arn"),
 	logStreamName: text("log_stream_name"),
 
-	// Billing
-	authorizedFlops: numeric("authorized_flops").notNull(),
-	costFlops: numeric("cost_flops"),
-	mppChannelId: text("mpp_channel_id"),
+	// Token usage & cost
+	inputTokens: integer("input_tokens"),
+	outputTokens: integer("output_tokens"),
+	cacheReadTokens: integer("cache_read_tokens"),
+	cacheWriteTokens: integer("cache_write_tokens"),
+	bedrockCostUsd: numeric("bedrock_cost_usd", { precision: 12, scale: 6 }),
+	containerCostUsd: numeric("container_cost_usd", { precision: 12, scale: 6 }),
+	costUsd: numeric("cost_usd", { precision: 12, scale: 6 }),
 
 	// Timestamps
 	submittedAt: timestamp("submitted_at").notNull().defaultNow(),

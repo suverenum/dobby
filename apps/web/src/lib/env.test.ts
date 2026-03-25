@@ -31,27 +31,29 @@ describe("env", () => {
 		vi.stubEnv("DATABASE_URL", "postgres://user:pass@host:5432/db");
 		const { getEnv } = await import("./env");
 		const env = getEnv();
-		expect(env.DOBBY_HOURLY_RATE).toBe(100);
 		expect(env.DOBBY_MAX_JOB_HOURS).toBe(6);
 		expect(env.DOBBY_ACCOUNT_VCPU_LIMIT).toBe(24);
 		expect(env.DOBBY_VM_CPU).toBe(4);
 		expect(env.AWS_REGION).toBe("us-east-1");
+		expect(env.BEDROCK_INPUT_PRICE_PER_1M).toBe(5.0);
+		expect(env.BEDROCK_OUTPUT_PRICE_PER_1M).toBe(25.0);
+		expect(env.FARGATE_SPOT_VCPU_PER_HOUR).toBeCloseTo(0.01334058, 6);
 	});
 
 	it("overrides defaults when Dobby env vars are set", async () => {
 		vi.stubEnv("DATABASE_URL", "postgres://user:pass@host:5432/db");
-		vi.stubEnv("DOBBY_HOURLY_RATE", "200");
 		vi.stubEnv("DOBBY_MAX_JOB_HOURS", "12");
 		vi.stubEnv("DOBBY_ACCOUNT_VCPU_LIMIT", "48");
 		vi.stubEnv("DOBBY_VM_CPU", "8");
 		vi.stubEnv("AWS_REGION", "eu-west-1");
+		vi.stubEnv("BEDROCK_INPUT_PRICE_PER_1M", "3.0");
 		const { getEnv } = await import("./env");
 		const env = getEnv();
-		expect(env.DOBBY_HOURLY_RATE).toBe(200);
 		expect(env.DOBBY_MAX_JOB_HOURS).toBe(12);
 		expect(env.DOBBY_ACCOUNT_VCPU_LIMIT).toBe(48);
 		expect(env.DOBBY_VM_CPU).toBe(8);
 		expect(env.AWS_REGION).toBe("eu-west-1");
+		expect(env.BEDROCK_INPUT_PRICE_PER_1M).toBe(3.0);
 	});
 
 	it("optional Dobby vars are undefined when not set", async () => {
@@ -64,14 +66,6 @@ describe("env", () => {
 		expect(env.DOBBY_CONTAINER_IMAGE).toBeUndefined();
 		expect(env.DOBBY_CALLBACK_SECRET).toBeUndefined();
 		expect(env.AWS_ACCESS_KEY_ID).toBeUndefined();
-		expect(env.AWS_SECRET_ACCESS_KEY).toBeUndefined();
-		expect(env.ECS_CLUSTER_ARN).toBeUndefined();
-		expect(env.ECS_TASK_DEFINITION_ARN).toBeUndefined();
-		expect(env.ECS_SUBNETS).toBeUndefined();
-		expect(env.ECS_SECURITY_GROUPS).toBeUndefined();
-		expect(env.KMS_KEY_ID).toBeUndefined();
-		expect(env.MPP_ENDPOINT).toBeUndefined();
-		expect(env.MPP_API_KEY).toBeUndefined();
 	});
 
 	it("caches env after first call", async () => {

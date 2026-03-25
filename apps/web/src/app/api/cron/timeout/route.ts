@@ -2,12 +2,10 @@ import { and, eq, inArray, isNull, lt, or } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb } from "../../../../db";
 import { jobs } from "../../../../db/schema";
-import { calculateJobCost } from "../../../../domain/jobs/billing";
 import { stopTask } from "../../../../domain/jobs/ecs";
 import { resumeJob } from "../../../../domain/jobs/resume";
 import { ACTIVE_STATUSES, isValidTransition, type JobStatus } from "../../../../domain/jobs/status";
 import { getEnv } from "../../../../lib/env";
-import { settlePayment } from "../../../../lib/mpp";
 import { verifyBearerToken } from "../../../../lib/session";
 import { sendNotification } from "../../../../lib/telegram";
 
@@ -41,7 +39,7 @@ export async function GET(request: Request) {
 
 	// Find active, interrupted, or stale jobs that are overdue:
 	// - Active jobs with startedAt before the max duration cutoff, OR
-	// - Interrupted jobs that exceeded max duration (resume keeps failing, MPP escrow stuck), OR
+	// - Interrupted jobs that exceeded max duration (resume keeps failing), OR
 	// - Jobs stuck in provisioning (startedAt is null) submitted before provisioning cutoff, OR
 	// - Pending jobs that were never provisioned (submitted before provisioning cutoff)
 	// Note: Resumed provisioning jobs (startedAt is set) are caught by the max duration check.
@@ -81,19 +79,10 @@ export async function GET(request: Request) {
 
 			const now = new Date();
 
-			// Calculate cost
 			const updateFields: Record<string, unknown> = {
 				status: targetStatus,
 				finishedAt: now,
 			};
-
-			let costFlops: string | undefined;
-			if (job.startedAt) {
-				const durationMs = now.getTime() - new Date(job.startedAt).getTime();
-				const cost = calculateJobCost(durationMs, env.DOBBY_HOURLY_RATE, env.DOBBY_MAX_JOB_HOURS);
-				costFlops = cost.toString();
-				updateFields.costFlops = costFlops;
-			}
 
 			// CAS update to claim the terminal status — secrets are NOT cleared yet
 			// so we can revert if stopTask() fails transiently.
@@ -126,7 +115,6 @@ export async function GET(request: Request) {
 						.set({
 							status: job.status as JobStatus,
 							finishedAt: null,
-							costFlops: job.costFlops,
 						})
 						.where(and(eq(jobs.id, job.id), eq(jobs.status, targetStatus)));
 					results.push({ jobId: job.id, stopped: false, error: `ECS stop failed: ${err}` });
@@ -134,9 +122,7 @@ export async function GET(request: Request) {
 				}
 			}
 
-			// Task is confirmed stopped — now clear secrets and settle payment.
-			// Both operations must be attempted even if one fails, to avoid
-			// stranding secrets or leaving payments unsettled.
+			// Task is confirmed stopped — now clear secrets.
 			try {
 				await db
 					.update(jobs)
@@ -146,20 +132,10 @@ export async function GET(request: Request) {
 				console.error(`Failed to clear secrets for timed-out job ${job.id}:`, secretErr);
 			}
 
-			// Settle MPP payment (non-blocking)
-			if (job.mppChannelId) {
-				const authorizedFlops = Number(job.authorizedFlops) || 0;
-				const finalCost = costFlops ? Number(costFlops) : 0;
-				settlePayment(job.mppChannelId, finalCost, authorizedFlops).catch((error) => {
-					console.error(`Failed to settle MPP payment for job ${job.id}:`, error);
-				});
-			}
-
 			// Send Telegram notification (non-blocking)
 			sendNotification(
 				{
 					...job,
-					costFlops: costFlops ?? job.costFlops,
 					finishedAt: now,
 				},
 				targetStatus,

@@ -2,14 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
 import { getDb } from "../../../../../../db";
 import { jobs } from "../../../../../../db/schema";
-import {
-	calculateJobCost,
-	type JobStatus,
-	stopTask,
-	validateTransition,
-} from "../../../../../../domain/jobs";
-import { getEnv } from "../../../../../../lib/env";
-import { settlePayment } from "../../../../../../lib/mpp";
+import { type JobStatus, stopTask, validateTransition } from "../../../../../../domain/jobs";
 import { validateAdminSession } from "../../../../../../lib/session";
 import { sendNotification } from "../../../../../../lib/telegram";
 
@@ -42,20 +35,11 @@ export async function POST(
 		);
 	}
 
-	const env = getEnv();
 	const now = new Date();
 	const updateFields: Record<string, unknown> = {
 		status: "stopped",
 		finishedAt: now,
 	};
-
-	// Calculate cost if job was started
-	let cost = 0;
-	if (job.startedAt) {
-		const durationMs = now.getTime() - new Date(job.startedAt).getTime();
-		cost = calculateJobCost(durationMs, env.DOBBY_HOURLY_RATE, env.DOBBY_MAX_JOB_HOURS);
-		updateFields.costFlops = cost.toString();
-	}
 
 	// CAS update to claim the terminal status — secrets are NOT cleared yet
 	// so we can revert if stopTask() fails transiently.
@@ -86,7 +70,6 @@ export async function POST(
 				.set({
 					status,
 					finishedAt: null,
-					costFlops: job.costFlops,
 				})
 				.where(and(eq(jobs.id, id), eq(jobs.status, "stopped" as JobStatus)));
 			return NextResponse.json(
@@ -96,9 +79,7 @@ export async function POST(
 		}
 	}
 
-	// Task is confirmed stopped — now clear secrets and settle payment.
-	// Both operations must be attempted even if one fails, to avoid
-	// stranding secrets or leaving payments unsettled.
+	// Task is confirmed stopped — now clear secrets.
 	try {
 		await db
 			.update(jobs)
@@ -108,19 +89,10 @@ export async function POST(
 		console.error(`Failed to clear secrets for stopped job ${id}:`, secretErr);
 	}
 
-	// Settle MPP payment after task is confirmed stopped (non-blocking)
-	if (job.mppChannelId) {
-		const authorizedFlops = Number(job.authorizedFlops) || 0;
-		settlePayment(job.mppChannelId, cost, authorizedFlops).catch((error) => {
-			console.error(`Failed to settle MPP payment for job ${id}:`, error);
-		});
-	}
-
 	// Send Telegram notification (non-blocking)
 	sendNotification(
 		{
 			...job,
-			costFlops: (updateFields.costFlops as string) ?? job.costFlops,
 			finishedAt: now,
 		},
 		"stopped",

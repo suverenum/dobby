@@ -28,7 +28,6 @@ function setRequiredEnv() {
 	vi.stubEnv("DATABASE_URL", "postgres://user:pass@host:5432/db");
 	vi.stubEnv("AWS_REGION", "us-east-1");
 	vi.stubEnv("DOBBY_MAX_JOB_HOURS", "6");
-	vi.stubEnv("DOBBY_HOURLY_RATE", "100");
 	vi.stubEnv("ECS_CLUSTER_ARN", "arn:aws:ecs:us-east-1:123456789:cluster/dobby");
 	vi.stubEnv("CRON_SECRET", TEST_CRON_SECRET);
 }
@@ -54,9 +53,13 @@ function makeJob(overrides: Record<string, unknown> = {}) {
 		ecsTaskArn: "arn:aws:ecs:us-east-1:123456789:task/dobby/task123",
 		ecsClusterArn: "arn:aws:ecs:us-east-1:123456789:cluster/dobby",
 		logStreamName: null,
-		authorizedFlops: "600",
-		costFlops: null,
-		mppChannelId: null,
+		inputTokens: null,
+		outputTokens: null,
+		cacheReadTokens: null,
+		cacheWriteTokens: null,
+		bedrockCostUsd: null,
+		containerCostUsd: null,
+		costUsd: null,
 		submittedAt: new Date("2026-03-20T00:00:00Z"),
 		startedAt: new Date("2026-03-20T00:05:00Z"),
 		finishedAt: null,
@@ -176,45 +179,20 @@ describe("GET /api/cron/timeout", () => {
 		expect(body.timedOut).toBe(1);
 		expect(body.failed).toBe(0);
 
-		// Verify stopTask was called
 		expect(mockStopTask).toHaveBeenCalledOnce();
 		expect(mockStopTask.mock.calls[0]![0].id).toBe(job.id);
 
-		// Verify job was updated: first CAS claims terminal status
 		expect(mockUpdate).toHaveBeenCalled();
 		expect(mockSet).toHaveBeenCalled();
 		const updateArg = mockSet.mock.calls[0]![0];
 		expect(updateArg.status).toBe("timed_out");
 		expect(updateArg.finishedAt).toBeInstanceOf(Date);
-		// Secrets are cleared in a separate update after task stop is confirmed
 		expect(mockSet).toHaveBeenCalledWith(
 			expect.objectContaining({
 				encryptedGitCredentials: "",
 				encryptedSecrets: null,
 			}),
 		);
-	});
-
-	it("calculates cost for timed-out jobs with startedAt", async () => {
-		setRequiredEnv();
-		const startedAt = new Date(Date.now() - 7 * 60 * 60 * 1000); // 7 hours ago
-		const job = makeJob({ startedAt });
-		setupDbChain([job]);
-		mockStopTask.mockResolvedValue(undefined);
-
-		const { GET } = await import("./route");
-
-		const request = makeAuthenticatedRequest();
-		const response = await GET(request);
-
-		expect(response.status).toBe(200);
-
-		const updateArg = mockSet.mock.calls[0]![0];
-		// Cost should be capped at hourlyRate * maxJobHours = 100 * 6 = 600
-		expect(updateArg.costFlops).toBeDefined();
-		const cost = Number.parseFloat(updateArg.costFlops);
-		expect(cost).toBeGreaterThan(0);
-		expect(cost).toBeLessThanOrEqual(600); // Max cap
 	});
 
 	it("handles multiple overdue jobs", async () => {
@@ -249,7 +227,6 @@ describe("GET /api/cron/timeout", () => {
 		expect(body.timedOut).toBe(1);
 		expect(mockStopTask).not.toHaveBeenCalled();
 
-		// Still updates status
 		const updateArg = mockSet.mock.calls[0]![0];
 		expect(updateArg.status).toBe("timed_out");
 	});
@@ -267,11 +244,9 @@ describe("GET /api/cron/timeout", () => {
 		const response = await GET(request);
 
 		const body = await response.json();
-		// stopTask failed, so status is reverted — job is NOT timed out
 		expect(body.timedOut).toBe(0);
 		expect(body.failed).toBe(1);
 		expect(body.results[0].error).toContain("ECS stop failed");
-		// Second set call reverts the terminal status
 		expect(mockSet).toHaveBeenCalledWith(
 			expect.objectContaining({ status: "executing", finishedAt: null }),
 		);
@@ -290,7 +265,6 @@ describe("GET /api/cron/timeout", () => {
 		const request = makeAuthenticatedRequest();
 		await GET(request);
 
-		// Secrets are cleared in a separate update after stopTask succeeds
 		expect(mockSet).toHaveBeenCalledWith(
 			expect.objectContaining({
 				encryptedGitCredentials: "",

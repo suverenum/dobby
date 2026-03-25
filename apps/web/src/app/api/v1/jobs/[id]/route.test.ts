@@ -38,9 +38,13 @@ const sampleJob = {
 	ecsTaskArn: "arn:aws:ecs:us-east-1:123:task/cluster/task-id",
 	ecsClusterArn: "arn:aws:ecs:us-east-1:123:cluster/dobby",
 	logStreamName: "ecs/dobby/task-id",
-	authorizedFlops: "600",
-	costFlops: "120",
-	mppChannelId: "mpp-channel-xyz",
+	inputTokens: 125000,
+	outputTokens: 45000,
+	cacheReadTokens: 80000,
+	cacheWriteTokens: 30000,
+	bedrockCostUsd: "3.525000",
+	containerCostUsd: "0.010000",
+	costUsd: "3.535000",
 	submittedAt: new Date("2026-03-21T10:00:00Z"),
 	startedAt: new Date("2026-03-21T10:01:00Z"),
 	finishedAt: null,
@@ -78,7 +82,7 @@ describe("GET /v1/jobs/:id", () => {
 		expect(json.error).toContain("not found");
 	});
 
-	it("returns job fields on success", async () => {
+	it("returns job fields on success including token/cost data", async () => {
 		mockWhere.mockResolvedValue([sampleJob]);
 		const res = await callGet("db_abcdefghijklmnopqrstu");
 		expect(res.status).toBe(200);
@@ -90,7 +94,13 @@ describe("GET /v1/jobs/:id", () => {
 		expect(json.workingBranch).toBe(sampleJob.workingBranch);
 		expect(json.prUrl).toBe(sampleJob.prUrl);
 		expect(json.resumeCount).toBe(1);
-		expect(json.costFlops).toBe("120");
+		expect(json.inputTokens).toBe(125000);
+		expect(json.outputTokens).toBe(45000);
+		expect(json.cacheReadTokens).toBe(80000);
+		expect(json.cacheWriteTokens).toBe(30000);
+		expect(json.bedrockCostUsd).toBe("3.525000");
+		expect(json.containerCostUsd).toBe("0.010000");
+		expect(json.costUsd).toBe("3.535000");
 	});
 
 	it("never returns encrypted fields", async () => {
@@ -102,9 +112,7 @@ describe("GET /v1/jobs/:id", () => {
 		expect(json.ecsTaskArn).toBeUndefined();
 		expect(json.ecsClusterArn).toBeUndefined();
 		expect(json.logStreamName).toBeUndefined();
-		expect(json.mppChannelId).toBeUndefined();
 		expect(json.lastCheckpointCommit).toBeUndefined();
-		expect(json.authorizedFlops).toBeUndefined();
 	});
 
 	it("truncates task to 200 characters", async () => {
@@ -122,7 +130,9 @@ describe("GET /v1/jobs/:id", () => {
 			prUrl: null,
 			startedAt: null,
 			finishedAt: null,
-			costFlops: null,
+			inputTokens: null,
+			outputTokens: null,
+			costUsd: null,
 			resumeCount: 0,
 		};
 		mockWhere.mockResolvedValue([minimalJob]);
@@ -131,7 +141,9 @@ describe("GET /v1/jobs/:id", () => {
 		expect(json.prUrl).toBeNull();
 		expect(json.startedAt).toBeNull();
 		expect(json.finishedAt).toBeNull();
-		expect(json.costFlops).toBeNull();
+		expect(json.inputTokens).toBeNull();
+		expect(json.outputTokens).toBeNull();
+		expect(json.costUsd).toBeNull();
 		expect(json.resumeCount).toBe(0);
 	});
 });
