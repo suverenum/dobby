@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Entrypoint for the Dobby runner container. Clones a GitHub repository, runs the
+# OpenCode AI agent (with Hyperpowers/execute-ralph backed by AWS Bedrock) against a
+# task description, and pushes a draft pull request with the results. Handles SIGTERM
+# gracefully by checkpointing in-progress work so interrupted jobs can be resumed.
+
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 log() { echo "[dobby-runner] $(date -u '+%Y-%m-%dT%H:%M:%SZ') $*"; }
