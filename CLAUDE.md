@@ -2,7 +2,9 @@
 
 ## Project Overview
 
-This is a monorepo boilerplate for starting new projects with our standard stack. It uses Next.js 16 (App Router, Turbopack, React Compiler), Bun workspaces, Turborepo, Drizzle ORM + Neon Postgres, Tailwind CSS v4, Biome, Vitest, and Playwright.
+Dobby is an ephemeral AI coding service. Callers submit a task + GitHub repo via REST API, Dobby provisions an ECS Fargate Spot container running OpenCode with Hyperpowers (execute-ralph) backed by AWS Bedrock, and returns a draft pull request. Billing is per-minute in FLOPS tokens via the Machine Payments Protocol.
+
+The codebase is a Bun monorepo using Next.js 16 (App Router, Turbopack, React Compiler), Turborepo, Drizzle ORM + Neon Postgres, Tailwind CSS v4, Biome, Vitest, and Playwright.
 
 ## Essential Commands
 
@@ -21,36 +23,52 @@ bun run storybook    # Start Storybook for UI components
 ## Architecture
 
 ### Monorepo Structure
-- `apps/web/` — Main Next.js application
+
+- `apps/web/` — Next.js application (API, admin UI, job orchestration)
 - `packages/ui/` — Shared UI components (Radix + CVA + Tailwind + Storybook 10)
 - `packages/utils/` — Shared utilities (cn, etc.)
 - `packages/tsconfig/` — Shared TypeScript configs
+- `runner/` — Docker container that clones repos, runs the AI agent, creates PRs
 
 ### Key Patterns
+
 - Server Components by default, `'use client'` only when needed
 - Domain-driven design: business logic in `src/domain/`
 - Server actions for mutations, TanStack Query for server state, Zustand for client state
-- Zod for env validation and form schemas
+- Zod for env validation and API request schemas
 - Sentry + PostHog degrade gracefully when keys are missing
+- CAS (Compare-And-Swap) for concurrent DB updates
+- Fargate Spot with auto-resume on interruption
 
 ### Styling
+
 - Tailwind CSS v4 with PostCSS + Protocol theme (emerald accent, zinc neutrals)
 - Dark mode via `next-themes` with system preference sync
 - CVA for component variants, `cn()` from `@suverenum/utils`
 - `@tailwindcss/typography` for prose content
 
 ## Testing
+
 - Unit tests: Vitest + React Testing Library (colocated `*.test.ts(x)`)
 - E2E tests: Playwright (`apps/web/e2e/`)
 - Run from root: `bun run test` / `bun run test:e2e`
 
 ## Database
+
 - Drizzle ORM + Neon serverless Postgres
-- Schema in `apps/web/src/db/schema.ts`
+- Schema in `apps/web/src/db/schema.ts` (single `jobs` table)
 - Migrations via `drizzle-kit` (run from `apps/web/`): `db:generate`, `db:migrate`, `db:push`, `db:studio`
 
+## Issue Tracking
+
+- **Beads (bd)** for all issue tracking — Dolt-powered, dependency-aware graph tracker
+- `bd ready` to see unblocked work, `bd create` / `bd update` / `bd close` for lifecycle
+- Issues prefixed `dobby-<hash>` (e.g., `dobby-a3f2`)
+- See AGENTS.md for full bd workflow and agent instructions
+
 ## Guidelines & Workflow
-- `AGENTS.md` — instructions for AI coding agents
+
+- `AGENTS.md` — instructions for AI coding agents (includes beads integration)
 - `guidelines/workflow.md` — product improvement workflow (PRD → SPEC → tasks → implement)
 - `guidelines/docs/` — PRD and SPEC templates
 - `guidelines/roles/` — role-specific guidelines (EM, Engineer)

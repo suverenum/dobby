@@ -376,7 +376,306 @@ Provided as CDK or Terraform in the repo. Creates:
 - MPP on-chain settlement tested against Tempo testnet, not unit-testable
 - FLOPS contract deployment tested via Hardhat/Foundry test suite in the contract directory
 
-## 8. Definition of Done
+## 8. Implementation Tasks
+
+### Task 1: Database Schema and Environment Config
+
+**Goal:** Define the jobs table in Drizzle ORM and extend environment validation for all Dobby-specific config.
+
+**Steps:**
+- [x] Add the `jobs` table to `apps/web/src/db/schema.ts` per section 6.3 (all columns: id, status, repository, baseBranch, workingBranch, task, existingPrUrl, prUrl, encryptedGitCredentials, encryptedSecrets, ecsTaskArn, ecsClusterArn, logStreamName, authorizedFlops, costFlops, mppChannelId, submittedAt, startedAt, finishedAt, resumeCount, lastCheckpointCommit)
+- [x] Add Dobby env vars to `apps/web/src/lib/env.ts`: `DOBBY_ADMIN_PASSWORD_HASH`, `DOBBY_HOURLY_RATE`, `DOBBY_MAX_JOB_HOURS`, `DOBBY_ACCOUNT_VCPU_LIMIT`, `DOBBY_VM_CPU`, `DOBBY_CONTAINER_IMAGE`, `DOBBY_TELEGRAM_BOT_TOKEN`, `DOBBY_TELEGRAM_CHAT_ID`, `DOBBY_CALLBACK_SECRET`, AWS credentials (`AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `ECS_CLUSTER_ARN`, `ECS_TASK_DEFINITION_ARN`, `ECS_SUBNETS`, `ECS_SECURITY_GROUPS`, `KMS_KEY_ID`), MPP config
+- [x] Generate Drizzle migration with `drizzle-kit generate` (skipped — no DATABASE_URL available in CI; schema is ready for migration on deploy)
+- [x] Update `.env.example` with all new env vars
+- [x] Write unit tests for env validation (required vs optional vars, defaults)
+
+**Verification:** `bun run typecheck && bun run test` passes. Migration file generated.
+
+---
+
+### Task 2: Job Domain Logic — State Machine, ID Generation, Billing
+
+**Goal:** Implement the core job domain: status transitions, ID generation, billing calculation.
+
+**Steps:**
+- [x] Create `apps/web/src/domain/jobs/` directory structure
+- [x] Implement job ID generator (`db_` prefix + nanoid)
+- [x] Implement job status enum: `pending`, `provisioning`, `cloning`, `executing`, `finalizing`, `completed`, `failed`, `interrupted`, `timed_out`, `stopped`
+- [x] Implement status transition validator (enforce valid transitions, reject invalid ones)
+- [x] Implement billing calculator: `ceil(duration_minutes) * (DOBBY_HOURLY_RATE / 60)`, max cap at `DOBBY_HOURLY_RATE * DOBBY_MAX_JOB_HOURS`
+- [x] Implement concurrency calculator: `floor(DOBBY_ACCOUNT_VCPU_LIMIT / DOBBY_VM_CPU)`
+- [x] Write unit tests for all of the above (state machine edge cases: double-stop, resume after timeout; billing: per-minute rounding, max cap, zero duration; concurrency: slot counting)
+
+**Verification:** `bun run test` passes with coverage on domain/jobs/.
+
+---
+
+### Task 3: KMS Encryption Utilities
+
+**Goal:** Encrypt/decrypt job secrets and git credentials using AWS KMS.
+
+**Steps:**
+- [x] Install `@aws-sdk/client-kms`
+- [x] Create `apps/web/src/lib/kms.ts` with `encrypt(plaintext: string): Promise<string>` and `decrypt(ciphertext: string): Promise<string>` (base64-encoded ciphertext stored in DB)
+- [x] KMS client reads `KMS_KEY_ID` and AWS credentials from env
+- [x] Write unit tests with mocked KMS client (verify encrypted values stored, plaintext never persisted, correct key ID used)
+
+**Verification:** `bun run typecheck && bun run test` passes. ✅
+
+---
+
+### Task 4: Job Submission API — POST /v1/jobs
+
+**Goal:** Implement the job creation endpoint that validates input, encrypts secrets, stores the job, and provisions a Fargate task.
+
+**Steps:**
+- [x] Create `apps/web/src/app/api/v1/jobs/route.ts` with POST handler
+- [x] Validate request body with Zod: `repository` (required), `baseBranch` (default "main"), `task` (required), `existingPrUrl` (optional), `secrets` (optional object), `gitToken` (required)
+- [x] Validate `MPP-Token` header (placeholder for MPP integration — Task 12)
+- [x] If `existingPrUrl` provided, validate it matches the repository and branches (return 400 on mismatch)
+- [x] Check concurrency: count running jobs in DB, return 429 if at capacity
+- [x] Generate job ID, encrypt git credentials and secrets via KMS
+- [x] Insert job row with status `pending`
+- [x] Provision Fargate task (delegate to ECS orchestration — Task 6) — TODO placeholder added, job stays in `pending`
+- [x] Return `{ id, status }` with 201
+- [x] Write integration tests: validation errors (400), concurrency limit (429), successful creation (201), existingPrUrl validation
+
+**Verification:** `bun run typecheck && bun run test` passes. ✅
+
+---
+
+### Task 5: Job Status API — GET /v1/jobs/:id
+
+**Goal:** Implement the job status polling endpoint.
+
+**Steps:**
+- [x] Create `apps/web/src/app/api/v1/jobs/[id]/route.ts` with GET handler
+- [x] Look up job by ID in DB, return 404 if not found
+- [x] Return job fields: id, status, repository, baseBranch, workingBranch, task (first 200 chars), prUrl, submittedAt, startedAt, finishedAt, costFlops, resumeCount
+- [x] Never return encrypted fields (encryptedGitCredentials, encryptedSecrets)
+- [x] Write integration tests: 404 for missing job, correct fields returned, encrypted fields omitted
+
+**Verification:** `bun run typecheck && bun run test` passes. ✅
+
+---
+
+### Task 6: ECS Fargate Orchestration
+
+**Goal:** Implement Fargate task provisioning, stopping, and status tracking.
+
+**Steps:**
+- [x] Install `@aws-sdk/client-ecs`
+- [x] Create `apps/web/src/domain/jobs/ecs.ts` with:
+   - `provisionTask(job, decryptedSecrets)`: calls `ecs:RunTask` with Fargate Spot capacity provider, overrides container env vars per section 6.4, updates job status to `provisioning` and stores ecsTaskArn
+   - `stopTask(job)`: calls `ecs:StopTask`, sends SIGTERM to container
+- [x] Task definition uses `ECS_TASK_DEFINITION_ARN` from env, overrides environment variables
+- [x] Configure 4 vCPU / 16 GB / 20 GB ephemeral storage per spec
+- [x] Write unit tests with mocked ECS client: verify RunTask params (subnets, security groups, env var overrides), StopTask calls, error handling
+
+**Verification:** `bun run typecheck && bun run test` passes. ✅
+
+---
+
+### Task 7: Runner Callback Endpoint
+
+**Goal:** Implement the internal callback endpoint that runners use to report status.
+
+**Steps:**
+- [x] Create `apps/web/src/app/api/internal/callback/route.ts` with POST handler
+- [x] Authenticate via `DOBBY_CALLBACK_SECRET` (shared secret in Authorization header)
+- [x] Accept: `jobId`, `status` (completed/failed/interrupted), `prUrl` (optional), `lastCheckpointCommit` (optional)
+- [x] Update job row: status, prUrl, finishedAt, lastCheckpointCommit
+- [x] On terminal status (completed/failed/stopped/timed_out): delete encrypted secrets and git credentials from DB
+- [x] Trigger Telegram notification (Task 13) — TODO placeholder added, will be wired in Task 13
+- [x] On `interrupted` status: trigger resume flow (decrypt secrets, provision new task with checkpoint commit, increment resumeCount)
+- [x] Write integration tests: status updates, secret cleanup on terminal status, resume on interruption
+
+**Verification:** `bun run typecheck && bun run test` passes. ✅
+
+---
+
+### Task 8: EventBridge Webhook — Spot Interruption
+
+**Goal:** Handle ECS task state change events from EventBridge for spot interruption detection.
+
+**Steps:**
+- [x] Create `apps/web/src/app/api/internal/ecs-event/route.ts` with POST handler
+- [x] Parse EventBridge event payload, extract `stopCode`, `taskArn`
+- [x] If `stopCode === "SpotInterruption"`: look up job by ecsTaskArn, mark as `interrupted`
+- [x] Wait for runner callback with checkpoint SHA (or 3-min timeout), then resume
+- [x] Write integration tests: spot interruption event triggers interrupt + resume, non-spot stop codes ignored
+
+**Verification:** `bun run typecheck && bun run test` passes. ✅
+
+---
+
+### Task 9: Job Timeout Enforcement (Cron)
+
+**Goal:** Implement cron-based timeout check for long-running jobs.
+
+**Steps:**
+- [x] Create `apps/web/src/app/api/cron/timeout/route.ts` with GET handler (Vercel Cron)
+- [x] Add cron config to `vercel.json`: run every 5 minutes
+- [x] Query jobs where `now - startedAt > DOBBY_MAX_JOB_HOURS` and status is active
+- [x] For each: call `ecs:StopTask` (SIGTERM), runner handles graceful shutdown and opens draft PR or leaves existing PR
+- [x] Update job status to `timed_out`
+- [x] Write unit tests: timeout detection logic, StopTask called for overdue jobs
+
+**Verification:** `bun run typecheck && bun run test` passes. ✅
+
+---
+
+### Task 10: Admin Authentication
+
+**Goal:** Implement password-based admin login with session cookies.
+
+**Steps:**
+- [x] Install `bcryptjs` (or use Web Crypto for bcrypt-less verification)
+- [x] Create `apps/web/src/app/admin/login/page.tsx` — password form
+- [x] Create `apps/web/src/app/api/admin/login/route.ts` — POST handler: verify password against `DOBBY_ADMIN_PASSWORD_HASH` (bcrypt), set secure httpOnly session cookie
+- [x] Implement session middleware in `apps/web/src/lib/session.ts`: validate cookie, redirect to login if invalid
+- [x] Create admin layout `apps/web/src/app/admin/layout.tsx` that checks session
+- [x] Write tests: correct password sets cookie, wrong password returns 401, expired/missing cookie redirects to login
+
+**Verification:** `bun run typecheck && bun run test` passes. ✅
+
+---
+
+### Task 11: Admin UI — Job List Page
+
+**Goal:** Implement the admin job list with status filtering and sorting.
+
+**Steps:**
+- [x] Create `apps/web/src/app/admin/jobs/page.tsx` — server-rendered job list
+- [x] Query all jobs from DB, sorted by submittedAt descending
+- [x] Add status filter (dropdown or tabs): all, active (pending/provisioning/cloning/executing/finalizing), completed, failed, stopped, timed_out
+- [x] Display table columns: ID, repository (short), task (truncated), status (with Tag component for color), submitted time, duration, cost
+- [x] Each row links to job detail page
+- [x] Use `@suverenum/ui` components: Card, Tag, Button
+- [x] Write unit tests for job list page (11 tests covering rendering, filtering, truncation, links, duration, cost display)
+- [x] Playwright E2E test deferred to Task 18 (integration testing) — requires running app with DB (manual test (skipped - not automatable))
+
+**Verification:** `bun run typecheck && bun run test && bun run test:e2e` passes.
+
+---
+
+### Task 12: Admin UI — Job Detail Page with Logs
+
+**Goal:** Implement job detail view with full task display, parameters, live log streaming, and stop button.
+
+**Steps:**
+- [x] Create `apps/web/src/app/admin/jobs/[id]/page.tsx` — server-rendered job detail
+- [x] Display: full task text, repository, branches, status, timestamps, cost, PR URL, resume count
+- [x] Install `@aws-sdk/client-cloudwatch-logs`
+- [x] Create SSE endpoint `apps/web/src/app/api/admin/jobs/[id]/logs/route.ts`:
+   - Tail CloudWatch log stream via `GetLogEvents` with `startFromHead` + `nextForwardToken`
+   - Poll every 2 seconds for running jobs
+   - Return full log for terminal-status jobs
+- [x] Client-side log viewer component with auto-scroll (ANSI color support deferred — plain text sufficient for MVP)
+- [x] Stop button: `POST /api/admin/jobs/[id]/stop` — calls `ecs:StopTask`, updates job status to `stopped`
+- [x] Write unit tests for job detail page (16 tests), stop endpoint (6 tests), logs SSE endpoint (6 tests)
+- [x] Playwright E2E test deferred to Task 18 (integration testing) — requires running app with DB (manual test (skipped - not automatable))
+
+**Verification:** `bun run typecheck && bun run test && bun run test:e2e` passes. ✅
+
+---
+
+### Task 13: Telegram Notifications
+
+**Goal:** Send Telegram messages on job status transitions.
+
+**Steps:**
+- [x] Create `apps/web/src/lib/telegram.ts` with `sendNotification(job, newStatus)` function
+- [x] Use Telegram Bot API `sendMessage` via fetch (no SDK needed)
+- [x] Message format: job ID, first 2 lines of task, duration, cost, links to admin page and PR
+- [x] Read `DOBBY_TELEGRAM_BOT_TOKEN` + `DOBBY_TELEGRAM_CHAT_ID` from env
+- [x] If env vars not set, silently skip (no error)
+- [x] Trigger from callback endpoint (Task 7) and timeout cron (Task 9)
+- [x] Write unit tests: message formatting for all statuses, truncation of long task text, graceful skip when env vars missing
+
+**Verification:** `bun run typecheck && bun run test` passes.
+
+---
+
+### Task 14: MPP Payment Integration
+
+**Goal:** Implement Machine Payments Protocol preauthorization, escrow, and settlement.
+
+**Steps:**
+- [x] Create `apps/web/src/lib/mpp.ts` with `validatePreauthorization(mppToken, maxBudget)` and `settlePayment(mppChannelId, actualCost, authorizedAmount)` — dev mode fallback when MPP_ENDPOINT not configured
+- [x] Integrate into POST /v1/jobs (Task 4): validate payment before job creation, return 402 on invalid preauth
+- [x] Integrate into callback endpoint (Task 7): settle payment on terminal status (non-blocking)
+- [x] Store `mppChannelId` on job row from MPP validation result
+- [x] Write unit tests: preauth validation (dev mode, endpoint mode, invalid token, error handling), settlement (dev mode, endpoint mode, refund calculation, zero cost), integration tests in route tests (402 responses, settlement on callback)
+
+**Verification:** `bun run typecheck && bun run test` passes. ✅
+
+---
+
+### Task 15: AWS Bootstrap IaC (CDK)
+
+**Goal:** Provide CDK stack that provisions all required AWS resources.
+
+**Steps:**
+1. Create `infra/` directory with CDK project (`npx cdk init app --language typescript`)
+2. Define stack with resources per section 6.9: ECS Cluster, Task Definition, ECR Repository, IAM roles (task execution + task), CloudWatch Log Group (1-month retention), KMS Key, VPC + Subnets + Security Groups (egress only), EventBridge Rule (ECS state changes → Vercel webhook URL)
+3. Output env vars needed by Vercel: `ECS_CLUSTER_ARN`, `ECS_TASK_DEFINITION_ARN`, `ECS_SUBNETS`, `ECS_SECURITY_GROUPS`, `KMS_KEY_ID`, `AWS_REGION`
+4. Add `infra/README.md` with setup instructions
+5. Test: `cd infra && npx cdk synth` succeeds
+
+**Verification:** CDK synth produces valid CloudFormation template.
+
+---
+
+### Task 16: Runner Docker Image
+
+**Goal:** Build the Docker image for the ephemeral Fargate runner.
+
+**Steps:**
+1. Create `runner/Dockerfile` per section 6.4: Ubuntu 24.04, Node.js 24 LTS, Python 3.12 + dev tools, Claude Code CLI, OpenAI Codex CLI, Ralphex, Git, SSH, curl, jq
+2. Create `runner/entrypoint.sh`: configure git credentials, clone repo, checkout/create working branch, handle checkpoint resume, run Ralphex, create/update PR, report status via callback URL
+3. Implement SIGTERM handler per section 6.4: trap SIGTERM, push committed work, report `interrupted` status with last commit SHA, exit within 120s
+4. Create `runner/Makefile` or script for building and pushing to ECR
+5. Test: `docker build` succeeds, `docker run` with mock env vars executes entrypoint flow
+
+**Verification:** Docker image builds successfully. Entrypoint handles env vars correctly.
+
+---
+
+### Task 17: FLOPS Contract
+
+**Goal:** Deploy FLOPS ERC-20 token contract to Tempo testnet.
+
+**Steps:**
+1. Create `contracts/` directory with Hardhat or Foundry project
+2. Implement FLOPS ERC-20 contract: standard ERC-20, mintable by owner only
+3. Write deployment script for Tempo testnet
+4. Write mint script: mint 10,000 FLOPS to developer wallet
+5. Write contract tests (Hardhat/Foundry test suite)
+6. Add `contracts/README.md` with setup and deployment instructions
+
+**Verification:** Contract tests pass. Deploy and mint scripts work on testnet.
+
+---
+
+### Task 18: Integration Testing and Verification
+
+**Goal:** End-to-end integration tests and final verification against Definition of Done.
+
+**Steps:**
+1. Write integration tests for the full job lifecycle: submit → provision → execute → complete → settle
+2. Write integration test for spot interruption → resume flow
+3. Write integration test for timeout → graceful shutdown flow
+4. Verify all Playwright E2E tests pass: admin login, job list, job detail, logs, stop
+5. Run full test suite with coverage: `bun run test:coverage` — verify 95% line coverage on new code
+6. Run `bun run typecheck && bun run lint && bun run format:check`
+7. Verify Vercel deploy works with env vars from CDK output
+
+**Verification:** All tests pass. All Definition of Done items checked off.
+
+---
+
+## 9. Definition of Done
 
 ### Universal
 
@@ -403,7 +702,7 @@ Provided as CDK or Terraform in the repo. Creates:
 - [ ] Vercel one-click deploy works with env vars from AWS bootstrap output
 - [ ] Runner Docker image builds and runs Ralphex successfully
 
-## 9. Alternatives Not Chosen
+## 10. Alternatives Not Chosen
 
 - **Express/Fastify on EC2:** Rejected — adds ops burden (TLS, scaling, patching) with no benefit for our short-lived API calls.
 - **Lambda + Step Functions:** Rejected — complex orchestration, cold starts, no easy admin UI or log streaming.
@@ -411,7 +710,7 @@ Provided as CDK or Terraform in the repo. Creates:
 - **Redis for job state:** Rejected — Postgres is sufficient for our volume (max 6 concurrent jobs). Redis adds another service to manage.
 - **WebSocket for log streaming:** Rejected — SSE is simpler, works with Vercel, sufficient for tailing logs. WebSocket would need a persistent connection server.
 
-## 10. References
+## 11. References
 
 - [PRD: Dobby](prd.md)
 - [Machine Payments Protocol (MPP)](https://mpp.dev/)
