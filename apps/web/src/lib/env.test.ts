@@ -58,6 +58,12 @@ describe("env", () => {
 
 	it("optional Dobby vars are undefined when not set", async () => {
 		vi.stubEnv("DATABASE_URL", "postgres://user:pass@host:5432/db");
+		delete process.env.DOBBY_ADMIN_PASSWORD_HASH;
+		delete process.env.DOBBY_TELEGRAM_BOT_TOKEN;
+		delete process.env.DOBBY_TELEGRAM_CHAT_ID;
+		delete process.env.DOBBY_CONTAINER_IMAGE;
+		delete process.env.DOBBY_CALLBACK_SECRET;
+		delete process.env.AWS_ACCESS_KEY_ID;
 		const { getEnv } = await import("./env");
 		const env = getEnv();
 		expect(env.DOBBY_ADMIN_PASSWORD_HASH).toBeUndefined();

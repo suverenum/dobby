@@ -257,4 +257,19 @@ describe("sendNotification", () => {
 		expect(consoleSpy).toHaveBeenCalledWith("Telegram notification error:", expect.any(Error));
 		consoleSpy.mockRestore();
 	});
+
+	it("skips notification for non-meaningful status like pending", async () => {
+		await sendNotification(makeJob(), "pending");
+		expect(mockFetch).not.toHaveBeenCalled();
+	});
+
+	it("skips notification for cloning status", async () => {
+		await sendNotification(makeJob(), "cloning");
+		expect(mockFetch).not.toHaveBeenCalled();
+	});
+
+	it("skips notification for executing status", async () => {
+		await sendNotification(makeJob(), "executing");
+		expect(mockFetch).not.toHaveBeenCalled();
+	});
 });

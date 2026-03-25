@@ -763,4 +763,93 @@ describe("POST /api/internal/callback", () => {
 		expect(updateData.encryptedGitCredentials).toBeUndefined();
 		expect(updateData.encryptedSecrets).toBeUndefined();
 	});
+
+	it("persists token data in SIGTERM callback on stopped job", async () => {
+		selectResult = [
+			makeJob({
+				status: "stopped",
+				finishedAt: new Date(),
+				inputTokens: 10000,
+				outputTokens: 5000,
+			}),
+		];
+		const { POST } = await import("./route");
+		const req = createRequest({
+			jobId: "db_V1StGXR8_Z5jdHi6B-myT",
+			status: "interrupted",
+			inputTokens: 30000,
+			outputTokens: 8000,
+			cacheReadTokens: 5000,
+			cacheWriteTokens: 2000,
+		});
+		// biome-ignore lint/suspicious/noExplicitAny: test helper
+		const res = await POST(req as any);
+
+		expect(res.status).toBe(200);
+		expect(mockSet).toHaveBeenCalledOnce();
+		const updateData = mockSet.mock.calls[0]![0] as Record<string, unknown>;
+		// Token accumulation: existing + new
+		expect(updateData.inputTokens).toBe(40000); // 10K + 30K
+		expect(updateData.outputTokens).toBe(13000); // 5K + 8K
+		expect(updateData.cacheReadTokens).toBe(5000);
+		expect(updateData.cacheWriteTokens).toBe(2000);
+		expect(updateData.bedrockCostUsd).toBeDefined();
+		expect(updateData.costUsd).toBeDefined();
+		// Status should NOT be updated (SIGTERM on terminal job)
+		expect(updateData.status).toBeUndefined();
+		expect(mockProvisionTask).not.toHaveBeenCalled();
+	});
+
+	it("persists token data in SIGTERM callback on timed_out job", async () => {
+		selectResult = [makeJob({ status: "timed_out", finishedAt: new Date() })];
+		const { POST } = await import("./route");
+		const req = createRequest({
+			jobId: "db_V1StGXR8_Z5jdHi6B-myT",
+			status: "interrupted",
+			inputTokens: 50000,
+			outputTokens: 10000,
+		});
+		// biome-ignore lint/suspicious/noExplicitAny: test helper
+		const res = await POST(req as any);
+
+		expect(res.status).toBe(200);
+		expect(mockSet).toHaveBeenCalledOnce();
+		const updateData = mockSet.mock.calls[0]![0] as Record<string, unknown>;
+		expect(updateData.inputTokens).toBe(50000);
+		expect(updateData.outputTokens).toBe(10000);
+		expect(updateData.bedrockCostUsd).toBeDefined();
+		expect(mockProvisionTask).not.toHaveBeenCalled();
+	});
+
+	it("returns 409 when CAS detects concurrent status change", async () => {
+		// CAS returns empty array = status changed concurrently
+		mockReturning.mockReset().mockResolvedValue([]);
+		setJobFinalizing();
+		const { POST } = await import("./route");
+		const req = createRequest(validCompletedBody);
+		// biome-ignore lint/suspicious/noExplicitAny: test helper
+		const res = await POST(req as any);
+
+		expect(res.status).toBe(409);
+		const json = await res.json();
+		expect(json.error).toContain("status changed concurrently");
+	});
+
+	it("sets costUsd equal to bedrockCostUsd when startedAt is null", async () => {
+		selectResult = [makeJob({ status: "finalizing", startedAt: null })];
+		const { POST } = await import("./route");
+		const req = createRequest({
+			...validCompletedBody,
+			inputTokens: 1000000, // 1M input = $5
+			outputTokens: 0,
+		});
+		// biome-ignore lint/suspicious/noExplicitAny: test helper
+		await POST(req as any);
+
+		const updateData = mockSet.mock.calls[0]![0] as Record<string, unknown>;
+		expect(Number(updateData.bedrockCostUsd)).toBeCloseTo(5.0, 4);
+		expect(updateData.containerCostUsd).toBeUndefined();
+		// costUsd should equal bedrockCostUsd when no startedAt
+		expect(Number(updateData.costUsd)).toBeCloseTo(5.0, 4);
+	});
 });

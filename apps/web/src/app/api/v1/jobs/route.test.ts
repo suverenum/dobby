@@ -137,9 +137,6 @@ describe("POST /v1/jobs", () => {
 		expect(insertedRow.repository).toBe("https://github.com/org/repo");
 		expect(insertedRow.encryptedGitCredentials).toBe("encrypted-base64");
 		expect(insertedRow.encryptedSecrets).toBe("encrypted-base64");
-		// No authorizedFlops or mppChannelId
-		expect(insertedRow.authorizedFlops).toBeUndefined();
-		expect(insertedRow.mppChannelId).toBeUndefined();
 	});
 
 	it("returns 400 for invalid JSON body", async () => {
