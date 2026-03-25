@@ -23,6 +23,43 @@ callback() {
     -d "${payload}" || log "WARNING: callback failed"
 }
 
+# Extract token usage from OpenCode's SQLite database.
+# Sets INPUT_TOKENS, OUTPUT_TOKENS, CACHE_READ_TOKENS, CACHE_WRITE_TOKENS.
+extract_token_usage() {
+  local OPENCODE_DB="${XDG_DATA_HOME:-$HOME/.local/share}/opencode/opencode.db"
+
+  if [[ -f "${OPENCODE_DB}" ]]; then
+    local TOKEN_DATA
+    TOKEN_DATA=$(sqlite3 "${OPENCODE_DB}" "
+      SELECT json_object(
+        'inputTokens', COALESCE(SUM(json_extract(data, '$.tokens.input')), 0),
+        'outputTokens', COALESCE(SUM(json_extract(data, '$.tokens.output')), 0),
+        'cacheReadTokens', COALESCE(SUM(json_extract(data, '$.tokens.cache.read')), 0),
+        'cacheWriteTokens', COALESCE(SUM(json_extract(data, '$.tokens.cache.write')), 0)
+      )
+      FROM message
+      WHERE json_extract(data, '$.role') = 'assistant'
+    " 2>/dev/null || echo "{}")
+
+    INPUT_TOKENS=$(echo "${TOKEN_DATA}" | jq -r '.inputTokens // 0')
+    OUTPUT_TOKENS=$(echo "${TOKEN_DATA}" | jq -r '.outputTokens // 0')
+    CACHE_READ_TOKENS=$(echo "${TOKEN_DATA}" | jq -r '.cacheReadTokens // 0')
+    CACHE_WRITE_TOKENS=$(echo "${TOKEN_DATA}" | jq -r '.cacheWriteTokens // 0')
+  else
+    INPUT_TOKENS=0
+    OUTPUT_TOKENS=0
+    CACHE_READ_TOKENS=0
+    CACHE_WRITE_TOKENS=0
+  fi
+
+  log "Token usage: input=${INPUT_TOKENS} output=${OUTPUT_TOKENS} cache_read=${CACHE_READ_TOKENS} cache_write=${CACHE_WRITE_TOKENS}"
+}
+
+# Build token fields for callback payload
+token_callback_fields() {
+  echo "\"inputTokens\": ${INPUT_TOKENS:-0}, \"outputTokens\": ${OUTPUT_TOKENS:-0}, \"cacheReadTokens\": ${CACHE_READ_TOKENS:-0}, \"cacheWriteTokens\": ${CACHE_WRITE_TOKENS:-0}"
+}
+
 # ─── SIGTERM handler ──────────────────────────────────────────────────────────
 
 INTERRUPTED=0
@@ -36,6 +73,9 @@ handle_sigterm() {
     kill "${OPENCODE_PID}" 2>/dev/null || true
     wait "${OPENCODE_PID}" 2>/dev/null || true
   fi
+
+  # Extract token usage before sending callback
+  extract_token_usage
 
   cd "${WORK_DIR}" 2>/dev/null || exit 1
 
@@ -56,6 +96,7 @@ handle_sigterm() {
   if [[ -n "${PR_URL:-}" ]]; then
     extra="${extra:+${extra}, }\"prUrl\": \"${PR_URL}\""
   fi
+  extra="${extra:+${extra}, }$(token_callback_fields)"
 
   callback "interrupted" ${extra:+"${extra}"}
   exit 0
@@ -277,7 +318,10 @@ fi
 
 # ─── Done ─────────────────────────────────────────────────────────────────────
 
-EXTRA="\"lastCheckpointCommit\": \"${LAST_COMMIT}\""
+# Extract token usage before sending final callback
+extract_token_usage
+
+EXTRA="\"lastCheckpointCommit\": \"${LAST_COMMIT}\", $(token_callback_fields)"
 if [[ -n "${PR_URL}" ]]; then
   EXTRA="${EXTRA}, \"prUrl\": \"${PR_URL}\""
 fi
