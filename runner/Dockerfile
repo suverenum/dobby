@@ -1,3 +1,8 @@
+# Dobby runner image: provides a reproducible environment for running AI coding agents.
+# Includes OpenCode CLI, Hyperpowers skills, beads/dolt issue tracking, Node.js, Bun,
+# Python dev tools, and GitHub CLI — everything needed to clone a repo, execute an
+# autonomous coding task, and push a pull request from an ECS Fargate Spot container.
+
 FROM ubuntu:24.04
 
 # Prevent interactive prompts during package install
