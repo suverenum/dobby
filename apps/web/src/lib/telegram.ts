@@ -98,8 +98,11 @@ export function formatNotificationMessage(job: TelegramNotificationJob, newStatu
 	lines.push(truncateTask(job.task));
 
 	if (job.prUrl) {
+		// Extract PR number from URL (e.g., "https://github.com/org/repo/pull/42" → "PR-42")
+		const prNumber = job.prUrl.match(/\/pull\/(\d+)/)?.[1];
+		const prLabel = prNumber ? `PR-${prNumber}` : "PR";
 		lines.push("");
-		lines.push(`PR: ${job.prUrl}`);
+		lines.push(`📦 <a href="${job.prUrl}">${prLabel}</a>`);
 	}
 
 	return lines.join("\n");
