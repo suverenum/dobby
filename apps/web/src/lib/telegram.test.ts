@@ -12,11 +12,13 @@ vi.mock("./env", () => ({
 	getEnv: () => ({
 		DOBBY_TELEGRAM_BOT_TOKEN: mockBotToken,
 		DOBBY_TELEGRAM_CHAT_ID: mockChatId,
+		DOBBY_CALLBACK_URL: mockCallbackUrl,
 	}),
 }));
 
 let mockBotToken: string | undefined = "test-bot-token";
 let mockChatId: string | undefined = "test-chat-id";
+const mockCallbackUrl = "https://dobby.suverenum.ai";
 
 // Mock fetch
 const mockFetch = vi.fn();
@@ -90,47 +92,52 @@ describe("formatNotificationMessage", () => {
 		const job = makeJob({ prUrl: "https://github.com/acme/webapp/pull/42" });
 		const msg = formatNotificationMessage(job, "completed");
 
-		expect(msg).toContain("✅ Job db_test123 → completed");
-		expect(msg).toContain("📦 acme/webapp");
+		expect(msg).toContain("<b>Job done — 15m 30s</b>");
+		expect(msg).toContain("acme/webapp · db_test123");
 		expect(msg).toContain("Fix the login bug");
-		expect(msg).toContain("⏱ Duration: 15m 30s");
-		expect(msg).toContain("💰 Cost: 25.5 FLOPS");
-		expect(msg).toContain("🔗 PR: https://github.com/acme/webapp/pull/42");
+		expect(msg).toContain("PR: https://github.com/acme/webapp/pull/42");
+		expect(msg).toContain("Dashboard: https://dobby.suverenum.ai/admin/jobs/db_test123");
 	});
 
 	it("formats failed job message", () => {
 		const msg = formatNotificationMessage(makeJob(), "failed");
-		expect(msg).toContain("❌ Job db_test123 → failed");
+		expect(msg).toContain("<b>Job failed — 15m 30s</b>");
 	});
 
 	it("formats timed_out job message", () => {
 		const msg = formatNotificationMessage(makeJob(), "timed_out");
-		expect(msg).toContain("⏰ Job db_test123 → timed_out");
+		expect(msg).toContain("<b>Job timed out — 15m 30s</b>");
 	});
 
 	it("formats stopped job message", () => {
 		const msg = formatNotificationMessage(makeJob(), "stopped");
-		expect(msg).toContain("🛑 Job db_test123 → stopped");
+		expect(msg).toContain("<b>Job stopped — 15m 30s</b>");
 	});
 
 	it("formats interrupted job message", () => {
 		const msg = formatNotificationMessage(makeJob(), "interrupted");
-		expect(msg).toContain("⚡ Job db_test123 → interrupted");
+		expect(msg).toContain("<b>Job interrupted, resuming... — 15m 30s</b>");
+	});
+
+	it("formats provisioning job message without duration", () => {
+		const msg = formatNotificationMessage(
+			makeJob({ startedAt: null, finishedAt: null }),
+			"provisioning",
+		);
+		expect(msg).toContain("<b>New job started</b>");
+		expect(msg).not.toContain("—");
 	});
 
 	it("omits duration when no startedAt", () => {
 		const msg = formatNotificationMessage(makeJob({ startedAt: null }), "failed");
-		expect(msg).not.toContain("Duration");
+		expect(msg).toContain("<b>Job failed</b>");
+		expect(msg).not.toContain("—");
 	});
 
 	it("omits duration when no finishedAt", () => {
 		const msg = formatNotificationMessage(makeJob({ finishedAt: null }), "failed");
-		expect(msg).not.toContain("Duration");
-	});
-
-	it("omits cost when not set", () => {
-		const msg = formatNotificationMessage(makeJob({ costFlops: null }), "completed");
-		expect(msg).not.toContain("Cost");
+		expect(msg).toContain("<b>Job failed</b>");
+		expect(msg).not.toContain("—");
 	});
 
 	it("omits PR link when not set", () => {
@@ -138,25 +145,15 @@ describe("formatNotificationMessage", () => {
 		expect(msg).not.toContain("PR:");
 	});
 
-	it("shows resume count when > 0", () => {
-		const msg = formatNotificationMessage(makeJob({ resumeCount: 3 }), "completed");
-		expect(msg).toContain("🔄 Resumed 3 times");
-	});
-
-	it("shows singular resume count", () => {
-		const msg = formatNotificationMessage(makeJob({ resumeCount: 1 }), "completed");
-		expect(msg).toContain("🔄 Resumed 1 time");
-		expect(msg).not.toContain("times");
-	});
-
-	it("omits resume count when 0", () => {
-		const msg = formatNotificationMessage(makeJob({ resumeCount: 0 }), "completed");
-		expect(msg).not.toContain("Resumed");
+	it("includes dashboard link", () => {
+		const msg = formatNotificationMessage(makeJob(), "completed");
+		expect(msg).toContain("Dashboard: https://dobby.suverenum.ai/admin/jobs/db_test123");
 	});
 
 	it("handles unknown status with default emoji", () => {
 		const msg = formatNotificationMessage(makeJob(), "unknown_status");
-		expect(msg).toContain("ℹ️ Job db_test123 → unknown_status");
+		expect(msg).toContain("ℹ️");
+		expect(msg).toContain("db_test123");
 	});
 
 	it("extracts short repo from URL", () => {
@@ -164,7 +161,7 @@ describe("formatNotificationMessage", () => {
 			makeJob({ repository: "https://github.com/org/repo.git" }),
 			"completed",
 		);
-		expect(msg).toContain("📦 org/repo");
+		expect(msg).toContain("org/repo · db_test123");
 	});
 });
 
@@ -184,7 +181,8 @@ describe("sendNotification", () => {
 
 		const body = JSON.parse(options.body as string);
 		expect(body.chat_id).toBe("test-chat-id");
-		expect(body.text).toContain("Job db_test123");
+		expect(body.text).toContain("db_test123");
+		expect(body.parse_mode).toBe("HTML");
 		expect(body.disable_web_page_preview).toBe(true);
 	});
 

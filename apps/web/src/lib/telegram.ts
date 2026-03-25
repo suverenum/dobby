@@ -49,6 +49,15 @@ function shortRepo(repository: string): string {
 	return match?.[1] ?? repository;
 }
 
+const STATUS_HEADER: Record<string, string> = {
+	completed: "Job done",
+	failed: "Job failed",
+	timed_out: "Job timed out",
+	stopped: "Job stopped",
+	interrupted: "Job interrupted, resuming...",
+	provisioning: "New job started",
+};
+
 const STATUS_EMOJI: Record<string, string> = {
 	completed: "✅",
 	failed: "❌",
@@ -63,29 +72,29 @@ const STATUS_EMOJI: Record<string, string> = {
  */
 export function formatNotificationMessage(job: TelegramNotificationJob, newStatus: string): string {
 	const emoji = STATUS_EMOJI[newStatus] || "ℹ️";
+	const header = STATUS_HEADER[newStatus] || newStatus;
 	const lines: string[] = [];
 
-	lines.push(`${emoji} Job ${job.id} → ${newStatus}`);
-	lines.push(`📦 ${shortRepo(job.repository)}`);
-	lines.push("");
-	lines.push(truncateTask(job.task));
-
+	// Bold header with optional duration
+	let headerLine = `${emoji} <b>${header}`;
 	if (job.startedAt && job.finishedAt) {
 		const duration = new Date(job.finishedAt).getTime() - new Date(job.startedAt).getTime();
-		lines.push("");
-		lines.push(`⏱ Duration: ${formatDuration(duration)}`);
+		headerLine += ` — ${formatDuration(duration)}`;
 	}
+	headerLine += "</b>";
+	lines.push(headerLine);
 
-	if (job.costFlops) {
-		lines.push(`💰 Cost: ${job.costFlops} FLOPS`);
-	}
+	lines.push(`${shortRepo(job.repository)} · ${job.id}`);
+	lines.push(truncateTask(job.task));
 
 	if (job.prUrl) {
-		lines.push(`🔗 PR: ${job.prUrl}`);
+		lines.push(`PR: ${job.prUrl}`);
 	}
 
-	if (job.resumeCount && job.resumeCount > 0) {
-		lines.push(`🔄 Resumed ${job.resumeCount} time${job.resumeCount > 1 ? "s" : ""}`);
+	const env = getEnv();
+	const baseUrl = env.DOBBY_CALLBACK_URL;
+	if (baseUrl) {
+		lines.push(`Dashboard: ${baseUrl}/admin/jobs/${job.id}`);
 	}
 
 	return lines.join("\n");
@@ -117,6 +126,7 @@ export async function sendNotification(
 			body: JSON.stringify({
 				chat_id: chatId,
 				text,
+				parse_mode: "HTML",
 				disable_web_page_preview: true,
 			}),
 		});
