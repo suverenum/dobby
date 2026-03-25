@@ -67,7 +67,9 @@ inputTokens: bigint("input_tokens", { mode: "number" }),
 outputTokens: bigint("output_tokens", { mode: "number" }),
 cacheReadTokens: bigint("cache_read_tokens", { mode: "number" }),
 cacheWriteTokens: bigint("cache_write_tokens", { mode: "number" }),
-costUsd: numeric("cost_usd"),
+bedrockCostUsd: numeric("bedrock_cost_usd"),
+containerCostUsd: numeric("container_cost_usd"),
+costUsd: numeric("cost_usd"), // total: bedrock + container
 ```
 
 All nullable — existing jobs keep null values.
@@ -91,9 +93,11 @@ All nullable — existing jobs keep null values.
 - `apps/web/src/app/api/admin/jobs/[id]/stop/route.ts` (costFlops calculation, MPP settlement)
 - `apps/web/src/app/api/cron/timeout/route.ts` (costFlops calculation, MPP settlement)
 
-### 5.3. Bedrock Cost Calculation
+### 5.3. Cost Calculation
 
 New file: `apps/web/src/domain/jobs/cost.ts`
+
+#### Bedrock Cost (token-based)
 
 ```ts
 interface TokenUsage {
@@ -120,13 +124,47 @@ export function calculateBedrockCost(usage: TokenUsage, pricing: BedrockPricing)
 }
 ```
 
-Pricing env vars with defaults:
+#### Container Cost (time-based)
+
+Fargate Spot pricing is fixed per container size. We always run the same config:
+- 4 vCPU × $0.01334058/hr = $0.05336/hr
+- 16 GB RAM × $0.00146489/hr = $0.02344/hr
+- 1 GB ephemeral (over 20GB base) × $0.000111/hr = $0.000111/hr
+- **Total: ~$0.077/hr**
+
+```ts
+interface FargatePricing {
+    vcpuPerHour: number;     // default: 0.01334058 (Spot, us-east-1)
+    memGbPerHour: number;    // default: 0.00146489 (Spot, us-east-1)
+    ephemeralGbPerHour: number; // default: 0.000111 (per GB over 20GB)
+}
+
+export function calculateContainerCost(
+    durationMs: number,
+    vcpu: number,
+    memGb: number,
+    ephemeralGbOverBase: number,
+    pricing: FargatePricing,
+): number {
+    const hours = durationMs / 3_600_000;
+    return hours * (
+        vcpu * pricing.vcpuPerHour +
+        memGb * pricing.memGbPerHour +
+        ephemeralGbOverBase * pricing.ephemeralGbPerHour
+    );
+}
+```
+
+Pricing env vars:
 
 ```ts
 BEDROCK_INPUT_PRICE_PER_1M: z.coerce.number().default(5.00),
 BEDROCK_OUTPUT_PRICE_PER_1M: z.coerce.number().default(25.00),
 BEDROCK_CACHE_READ_PRICE_PER_1M: z.coerce.number().default(0.50),
 BEDROCK_CACHE_WRITE_PRICE_PER_1M: z.coerce.number().default(6.25),
+FARGATE_SPOT_VCPU_PER_HOUR: z.coerce.number().default(0.01334058),
+FARGATE_SPOT_MEM_GB_PER_HOUR: z.coerce.number().default(0.00146489),
+FARGATE_SPOT_EPHEMERAL_GB_PER_HOUR: z.coerce.number().default(0.000111),
 ```
 
 ### 5.4. Callback Schema Extension
@@ -234,11 +272,26 @@ if (input.inputTokens !== undefined || input.outputTokens !== undefined) {
     updateFields.cacheWriteTokens = totalCacheWrite;
 
     // Always recalculate cost from accumulated totals (avoids float drift)
-    updateFields.costUsd = calculateBedrockCost(
+    const bedrockCost = calculateBedrockCost(
         { inputTokens: totalInput, outputTokens: totalOutput,
           cacheReadTokens: totalCacheRead, cacheWriteTokens: totalCacheWrite },
         { inputPer1M: env.BEDROCK_INPUT_PRICE_PER_1M, ... }
-    ).toFixed(6);
+    );
+    updateFields.bedrockCostUsd = bedrockCost.toFixed(6);
+
+    // Container cost from total duration (startedAt to now/finishedAt)
+    if (job.startedAt) {
+        const finishedAt = updateFields.finishedAt ?? new Date();
+        const durationMs = finishedAt.getTime() - new Date(job.startedAt).getTime();
+        const containerCost = calculateContainerCost(
+            durationMs, env.DOBBY_VM_CPU, env.DOBBY_VM_CPU * 4, 1,
+            { vcpuPerHour: env.FARGATE_SPOT_VCPU_PER_HOUR, ... }
+        );
+        updateFields.containerCostUsd = containerCost.toFixed(6);
+        updateFields.costUsd = (bedrockCost + containerCost).toFixed(6);
+    } else {
+        updateFields.costUsd = bedrockCost.toFixed(6);
+    }
 }
 ```
 
@@ -262,7 +315,9 @@ if (input.inputTokens !== undefined || input.outputTokens !== undefined) {
     outputTokens,
     cacheReadTokens,
     cacheWriteTokens,
-    costUsd,
+    bedrockCostUsd,
+    containerCostUsd,
+    costUsd,         // total: bedrock + container
 }
 ```
 
@@ -277,7 +332,9 @@ On the job detail page, replace FLOPS cost with real cost breakdown:
 | Output tokens | 45,000 |
 | Cache read tokens | 80,000 |
 | Cache write tokens | 30,000 |
-| Cost (USD) | $3.52 |
+| Bedrock cost | $3.52 |
+| Container cost | $0.01 |
+| **Total cost** | **$3.53** |
 
 ### 5.9. Telegram Notification
 
@@ -289,7 +346,7 @@ db_WODxYC7J
 suverenum/dobby
 
 Add input validation to the /api/users endpoint
-125K in / 45K out · $3.52
+125K in / 45K out · $3.53
 
 PR: https://github.com/suverenum/dobby/pull/42
 ```
