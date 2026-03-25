@@ -41,29 +41,13 @@ vi.mock("../../../../../../db", () => ({
 
 // Mock domain/jobs
 const mockStopTask = vi.fn();
-const mockCalculateJobCost = vi.fn().mockReturnValue(50);
 vi.mock("../../../../../../domain/jobs", () => ({
-	calculateJobCost: (...args: unknown[]) => mockCalculateJobCost(...args),
 	validateTransition: (from: string, to: string) => {
 		if (to === "stopped" && ["provisioning", "cloning", "executing", "finalizing"].includes(from))
 			return;
 		throw new Error(`Invalid transition from ${from} to ${to}`);
 	},
 	stopTask: (...args: unknown[]) => mockStopTask(...args),
-}));
-
-// Mock env
-vi.mock("../../../../../../lib/env", () => ({
-	getEnv: () => ({
-		DOBBY_HOURLY_RATE: 100,
-		DOBBY_MAX_JOB_HOURS: 6,
-	}),
-}));
-
-// Mock MPP
-const mockSettlePayment = vi.fn().mockResolvedValue({});
-vi.mock("../../../../../../lib/mpp", () => ({
-	settlePayment: (...args: unknown[]) => mockSettlePayment(...args),
 }));
 
 // Mock Telegram
@@ -95,9 +79,13 @@ function makeJob(overrides: Record<string, unknown> = {}) {
 		ecsTaskArn: "arn:aws:ecs:us-east-1:123:task/abc",
 		ecsClusterArn: "arn:aws:ecs:us-east-1:123:cluster/dobby",
 		logStreamName: null,
-		authorizedFlops: "100",
-		costFlops: null,
-		mppChannelId: null,
+		inputTokens: null,
+		outputTokens: null,
+		cacheReadTokens: null,
+		cacheWriteTokens: null,
+		bedrockCostUsd: null,
+		containerCostUsd: null,
+		costUsd: null,
 		submittedAt: new Date("2026-03-20T10:00:00Z"),
 		startedAt: new Date("2026-03-20T10:01:00Z"),
 		finishedAt: null,
@@ -116,9 +104,7 @@ describe("POST /api/admin/jobs/[id]/stop", () => {
 		mockUpdateSet.mockClear();
 		mockUpdateWhere.mockClear();
 		mockReturning.mockClear().mockResolvedValue([{ id: "db_test1" }]);
-		mockSettlePayment.mockClear();
 		mockSendNotification.mockClear();
-		mockCalculateJobCost.mockClear().mockReturnValue(50);
 		mockJobRows = [];
 	});
 
@@ -170,48 +156,13 @@ describe("POST /api/admin/jobs/[id]/stop", () => {
 		expect(data.success).toBe(true);
 		expect(data.status).toBe("stopped");
 		expect(mockStopTask).toHaveBeenCalled();
-		// First CAS update claims terminal status (without clearing secrets)
 		expect(mockUpdateSet).toHaveBeenCalledWith(expect.objectContaining({ status: "stopped" }));
-		// Second update clears secrets after task is confirmed stopped
 		expect(mockUpdateSet).toHaveBeenCalledWith(
 			expect.objectContaining({
 				encryptedGitCredentials: "",
 				encryptedSecrets: null,
 			}),
 		);
-	});
-
-	it("calculates cost and clears secrets on stop", async () => {
-		mockValidateAdminSession.mockResolvedValue(true);
-		mockStopTask.mockResolvedValue(undefined);
-		mockJobRows = [makeJob({ status: "executing" })];
-
-		await POST(makeRequest() as never, {
-			params: Promise.resolve({ id: "db_test1" }),
-		});
-
-		expect(mockCalculateJobCost).toHaveBeenCalled();
-		// Cost is set in the initial CAS update
-		expect(mockUpdateSet).toHaveBeenCalledWith(expect.objectContaining({ costFlops: "50" }));
-		// Secrets are cleared in a separate update after task stop is confirmed
-		expect(mockUpdateSet).toHaveBeenCalledWith(
-			expect.objectContaining({
-				encryptedGitCredentials: "",
-				encryptedSecrets: null,
-			}),
-		);
-	});
-
-	it("settles MPP payment when mppChannelId is set", async () => {
-		mockValidateAdminSession.mockResolvedValue(true);
-		mockStopTask.mockResolvedValue(undefined);
-		mockJobRows = [makeJob({ status: "executing", mppChannelId: "ch_123" })];
-
-		await POST(makeRequest() as never, {
-			params: Promise.resolve({ id: "db_test1" }),
-		});
-
-		expect(mockSettlePayment).toHaveBeenCalledWith("ch_123", 50, 100);
 	});
 
 	it("sends Telegram notification on stop", async () => {
@@ -242,7 +193,6 @@ describe("POST /api/admin/jobs/[id]/stop", () => {
 		expect(res.status).toBe(502);
 		const data = await res.json();
 		expect(data.error).toContain("Failed to stop ECS task");
-		// First call sets terminal status, second call reverts it
 		expect(mockUpdateSet).toHaveBeenCalledWith(expect.objectContaining({ status: "stopped" }));
 		expect(mockUpdateSet).toHaveBeenCalledWith(
 			expect.objectContaining({ status: "executing", finishedAt: null }),

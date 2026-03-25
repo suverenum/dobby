@@ -1,3 +1,4 @@
+import { formatCostUsd, formatTokenCount } from "../domain/jobs/cost";
 import { getEnv } from "./env";
 
 export interface TelegramNotificationJob {
@@ -7,7 +8,9 @@ export interface TelegramNotificationJob {
 	prUrl: string | null;
 	startedAt: Date | null;
 	finishedAt: Date | null;
-	costFlops: string | null;
+	inputTokens: number | null;
+	outputTokens: number | null;
+	costUsd: string | null;
 	resumeCount: number | null;
 }
 
@@ -96,6 +99,15 @@ export function formatNotificationMessage(job: TelegramNotificationJob, newStatu
 	// Task
 	lines.push("");
 	lines.push(truncateTask(job.task));
+
+	// Token/cost summary (only when available and non-zero)
+	if (job.inputTokens && job.outputTokens) {
+		let tokenLine = `${formatTokenCount(job.inputTokens)} in / ${formatTokenCount(job.outputTokens)} out`;
+		if (job.costUsd) {
+			tokenLine += ` · ${formatCostUsd(Number(job.costUsd))}`;
+		}
+		lines.push(tokenLine);
+	}
 
 	if (job.prUrl) {
 		// Extract PR number from URL (e.g., "https://github.com/org/repo/pull/42" → "PR-42")

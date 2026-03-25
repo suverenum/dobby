@@ -18,7 +18,6 @@ const envSchema = z.object({
 	CRON_SECRET: z.string().optional(),
 
 	// Dobby — Job config
-	DOBBY_HOURLY_RATE: z.coerce.number().positive().default(100),
 	DOBBY_MAX_JOB_HOURS: z.coerce.number().positive().default(6),
 	DOBBY_ACCOUNT_VCPU_LIMIT: z.coerce.number().positive().default(24),
 	DOBBY_VM_CPU: z.coerce.number().positive().default(4),
@@ -43,12 +42,19 @@ const envSchema = z.object({
 	// Dobby — LLM (Bedrock via existing AWS credentials)
 	BEDROCK_MODEL_ID: z.string().default("us.anthropic.claude-opus-4-6-v1"),
 
+	// Dobby — Bedrock pricing (per 1M tokens, Opus 4 defaults)
+	BEDROCK_INPUT_PRICE_PER_1M: z.coerce.number().nonnegative().default(5.0),
+	BEDROCK_OUTPUT_PRICE_PER_1M: z.coerce.number().nonnegative().default(25.0),
+	BEDROCK_CACHE_READ_PRICE_PER_1M: z.coerce.number().nonnegative().default(0.5),
+	BEDROCK_CACHE_WRITE_PRICE_PER_1M: z.coerce.number().nonnegative().default(6.25),
+
+	// Dobby — Fargate Spot pricing (us-east-1)
+	FARGATE_SPOT_VCPU_PER_HOUR: z.coerce.number().nonnegative().default(0.01334058),
+	FARGATE_SPOT_MEM_GB_PER_HOUR: z.coerce.number().nonnegative().default(0.00146489),
+	FARGATE_SPOT_EPHEMERAL_GB_PER_HOUR: z.coerce.number().nonnegative().default(0.000111),
+
 	// Dobby — API authentication
 	DOBBY_API_TOKEN: z.string().optional(),
-
-	// Dobby — MPP
-	MPP_ENDPOINT: z.string().optional(),
-	MPP_API_KEY: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

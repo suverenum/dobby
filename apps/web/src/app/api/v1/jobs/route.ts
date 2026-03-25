@@ -5,7 +5,6 @@ import { getDb } from "../../../../db";
 import { jobs } from "../../../../db/schema";
 import {
 	ACTIVE_STATUSES,
-	calculateMaxBudget,
 	generateJobId,
 	hasCapacity,
 	provisionTask,
@@ -13,7 +12,6 @@ import {
 } from "../../../../domain/jobs";
 import { getEnv } from "../../../../lib/env";
 import { encrypt } from "../../../../lib/kms";
-import { MppError, settlePayment, validatePreauthorization } from "../../../../lib/mpp";
 import { sendNotification } from "../../../../lib/telegram";
 
 const GITHUB_PR_URL_RE = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/\d+$/;
@@ -95,60 +93,18 @@ export async function POST(request: NextRequest) {
 		}
 	}
 
-	// Authentication: Bearer token or MPP-Token
+	// Authentication: Bearer token
 	const env = getEnv();
 	const authHeader = request.headers.get("Authorization");
-	const mppToken = request.headers.get("MPP-Token");
 
-	// Bearer token auth (simple API token)
 	if (env.DOBBY_API_TOKEN) {
 		const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
-		if (bearerToken === env.DOBBY_API_TOKEN) {
-			// Authenticated via API token — skip MPP validation
-		} else if (!mppToken) {
+		if (bearerToken !== env.DOBBY_API_TOKEN) {
 			return NextResponse.json(
-				{ error: "Authorization required. Provide Bearer token or MPP-Token header." },
+				{ error: "Authorization required. Provide Bearer token." },
 				{ status: 401 },
 			);
 		}
-	}
-
-	// MPP-Token validation (required if not authenticated via Bearer token)
-	const isApiTokenAuth =
-		env.DOBBY_API_TOKEN &&
-		authHeader?.startsWith("Bearer ") &&
-		authHeader.slice(7) === env.DOBBY_API_TOKEN;
-
-	if (!isApiTokenAuth && !mppToken) {
-		return NextResponse.json({ error: "MPP-Token header is required" }, { status: 402 });
-	}
-
-	// Validate MPP preauthorization covers max budget
-	const maxBudget = calculateMaxBudget(env.DOBBY_HOURLY_RATE, env.DOBBY_MAX_JOB_HOURS);
-	let mppResult: Awaited<ReturnType<typeof validatePreauthorization>>;
-	if (isApiTokenAuth && !mppToken) {
-		// API token auth — skip MPP, use placeholder channel
-		mppResult = {
-			valid: true,
-			channelId: `api-token-${crypto.randomUUID().slice(0, 8)}`,
-			authorizedAmount: maxBudget,
-		};
-	} else {
-		try {
-			mppResult = await validatePreauthorization(mppToken!, maxBudget);
-		} catch (error) {
-			if (error instanceof MppError) {
-				return NextResponse.json({ error: error.message }, { status: 402 });
-			}
-			throw error;
-		}
-	}
-
-	if (!mppResult.valid) {
-		return NextResponse.json(
-			{ error: "MPP preauthorization insufficient for max job budget" },
-			{ status: 402 },
-		);
 	}
 
 	// Check concurrency (include "pending" to prevent burst submissions bypassing the limit)
@@ -186,8 +142,6 @@ export async function POST(request: NextRequest) {
 		existingPrUrl: input.existingPrUrl ?? null,
 		encryptedGitCredentials,
 		encryptedSecrets,
-		authorizedFlops: maxBudget.toString(),
-		mppChannelId: mppResult.channelId,
 	});
 
 	// Provision Fargate task
@@ -235,7 +189,9 @@ export async function POST(request: NextRequest) {
 				prUrl: null,
 				startedAt: null,
 				finishedAt: null,
-				costFlops: null,
+				inputTokens: null,
+				outputTokens: null,
+				costUsd: null,
 				resumeCount: 0,
 			},
 			"provisioning",
@@ -272,13 +228,6 @@ export async function POST(request: NextRequest) {
 				encryptedSecrets: null,
 			})
 			.where(eq(jobs.id, jobId));
-
-		// Settle MPP payment with zero cost to release preauthorization
-		if (mppResult.channelId) {
-			settlePayment(mppResult.channelId, 0, maxBudget).catch((settleErr) => {
-				console.error(`Failed to settle MPP payment for failed job ${jobId}:`, settleErr);
-			});
-		}
 
 		console.error(`Failed to provision ECS task for job ${jobId}:`, error);
 		return NextResponse.json(

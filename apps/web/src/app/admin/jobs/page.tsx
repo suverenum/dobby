@@ -12,6 +12,7 @@ import {
 import { getDb } from "../../../db";
 import { jobs } from "../../../db/schema";
 import { ACTIVE_STATUSES, type JobStatus, TERMINAL_STATUSES } from "../../../domain/jobs";
+import { formatCostUsd } from "../../../domain/jobs/cost";
 import { requireAdminSession } from "../../../lib/session";
 import { STATUS_VARIANT_MAP } from "./constants";
 import { JobStatusFilter } from "./status-filter";
@@ -49,9 +50,9 @@ function formatDuration(startedAt: Date | null, finishedAt: Date | null): string
 	return `${hours}h ${mins % 60}m`;
 }
 
-function formatCost(costFlops: string | null): string {
-	if (!costFlops) return "-";
-	return Number(costFlops).toFixed(2);
+function formatCost(costUsd: string | null): string {
+	if (!costUsd) return "-";
+	return formatCostUsd(Number(costUsd));
 }
 
 function formatTime(date: Date | null): string {
@@ -83,7 +84,7 @@ export default async function AdminJobsPage({ searchParams }: Props) {
 		submittedAt: jobs.submittedAt,
 		startedAt: jobs.startedAt,
 		finishedAt: jobs.finishedAt,
-		costFlops: jobs.costFlops,
+		costUsd: jobs.costUsd,
 	};
 
 	const [activeCountResult, completedCountResult, totalCountResult] = await Promise.all([
@@ -169,7 +170,7 @@ export default async function AdminJobsPage({ searchParams }: Props) {
 											{formatDuration(job.startedAt, job.finishedAt)}
 										</TableCell>
 										<TableCell className="whitespace-nowrap font-mono">
-											{formatCost(job.costFlops)}
+											{formatCost(job.costUsd)}
 										</TableCell>
 									</TableRow>
 								))

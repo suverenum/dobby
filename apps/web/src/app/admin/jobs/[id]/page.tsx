@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../../../../components
 import { getDb } from "../../../../db";
 import { jobs } from "../../../../db/schema";
 import { isActiveStatus, type JobStatus } from "../../../../domain/jobs";
+import { formatCostUsd, formatTokenCount } from "../../../../domain/jobs/cost";
 import { requireAdminSession } from "../../../../lib/session";
 import { STATUS_VARIANT_MAP } from "../constants";
 import { LogViewer } from "./log-viewer";
@@ -24,11 +25,6 @@ function formatDuration(startedAt: Date | null, finishedAt: Date | null): string
 	if (mins < 60) return `${mins}m`;
 	const hours = Math.floor(mins / 60);
 	return `${hours}h ${mins % 60}m`;
-}
-
-function formatCost(costFlops: string | null): string {
-	if (!costFlops) return "-";
-	return Number(costFlops).toFixed(2);
 }
 
 interface Props {
@@ -53,8 +49,13 @@ export default async function AdminJobDetailPage({ params }: Props) {
 			prUrl: jobs.prUrl,
 			ecsTaskArn: jobs.ecsTaskArn,
 			logStreamName: jobs.logStreamName,
-			authorizedFlops: jobs.authorizedFlops,
-			costFlops: jobs.costFlops,
+			inputTokens: jobs.inputTokens,
+			outputTokens: jobs.outputTokens,
+			cacheReadTokens: jobs.cacheReadTokens,
+			cacheWriteTokens: jobs.cacheWriteTokens,
+			bedrockCostUsd: jobs.bedrockCostUsd,
+			containerCostUsd: jobs.containerCostUsd,
+			costUsd: jobs.costUsd,
 			submittedAt: jobs.submittedAt,
 			startedAt: jobs.startedAt,
 			finishedAt: jobs.finishedAt,
@@ -167,8 +168,40 @@ export default async function AdminJobDetailPage({ params }: Props) {
 							<dt className="text-muted-foreground">Duration</dt>
 							<dd>{formatDuration(job.startedAt, job.finishedAt)}</dd>
 
-							<dt className="text-muted-foreground">Cost (FLOPS)</dt>
-							<dd className="font-mono">{formatCost(job.costFlops)}</dd>
+							<dt className="text-muted-foreground">Input Tokens</dt>
+							<dd className="font-mono">
+								{job.inputTokens != null ? formatTokenCount(job.inputTokens) : "-"}
+							</dd>
+
+							<dt className="text-muted-foreground">Output Tokens</dt>
+							<dd className="font-mono">
+								{job.outputTokens != null ? formatTokenCount(job.outputTokens) : "-"}
+							</dd>
+
+							<dt className="text-muted-foreground">Cache Read Tokens</dt>
+							<dd className="font-mono">
+								{job.cacheReadTokens != null ? formatTokenCount(job.cacheReadTokens) : "-"}
+							</dd>
+
+							<dt className="text-muted-foreground">Cache Write Tokens</dt>
+							<dd className="font-mono">
+								{job.cacheWriteTokens != null ? formatTokenCount(job.cacheWriteTokens) : "-"}
+							</dd>
+
+							<dt className="text-muted-foreground">Bedrock Cost</dt>
+							<dd className="font-mono">
+								{job.bedrockCostUsd != null ? formatCostUsd(Number(job.bedrockCostUsd)) : "-"}
+							</dd>
+
+							<dt className="text-muted-foreground">Container Cost</dt>
+							<dd className="font-mono">
+								{job.containerCostUsd != null ? formatCostUsd(Number(job.containerCostUsd)) : "-"}
+							</dd>
+
+							<dt className="text-muted-foreground font-semibold">Total Cost</dt>
+							<dd className="font-mono font-semibold">
+								{job.costUsd != null ? formatCostUsd(Number(job.costUsd)) : "-"}
+							</dd>
 
 							<dt className="text-muted-foreground">Resume Count</dt>
 							<dd>{job.resumeCount ?? 0}</dd>

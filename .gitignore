@@ -31,11 +31,15 @@ storybook-static/
 .DS_Store
 *.tsbuildinfo
 
+# coverage
+coverage/
+
 # vercel
 .vercel
 
 # opencode
 .opencode/
+opencode.json
 
 # Dolt database files (added by bd init)
 .dolt/
@@ -43,3 +47,10 @@ storybook-static/
 
 # bv (beads viewer) local config and caches
 .bv/
+
+# Beads / Dolt files (added by bd init)
+.beads-credential-key
+.beads/
+
+# Core dumps
+core.*

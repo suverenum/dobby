@@ -67,9 +67,13 @@ function makeJob(overrides: Record<string, unknown> = {}) {
 		ecsTaskArn: "arn:aws:ecs:us-east-1:123:task/abc",
 		ecsClusterArn: "arn:aws:ecs:us-east-1:123:cluster/dobby",
 		logStreamName: "ecs/dobby-runner/abc",
-		authorizedFlops: "600",
-		costFlops: "12.50",
-		mppChannelId: null,
+		inputTokens: null,
+		outputTokens: null,
+		cacheReadTokens: null,
+		cacheWriteTokens: null,
+		bedrockCostUsd: null,
+		containerCostUsd: null,
+		costUsd: null,
 		submittedAt: new Date("2026-03-20T10:00:00Z"),
 		startedAt: new Date("2026-03-20T10:01:00Z"),
 		finishedAt: null,
@@ -135,7 +139,7 @@ describe("AdminJobDetailPage", () => {
 	it("renders timestamps and cost", async () => {
 		mockJobRows = [
 			makeJob({
-				costFlops: "25.00",
+				costUsd: "25.000000",
 				submittedAt: new Date("2026-03-20T10:00:00Z"),
 				startedAt: new Date("2026-03-20T10:01:00Z"),
 				finishedAt: new Date("2026-03-20T10:31:00Z"),
@@ -149,7 +153,7 @@ describe("AdminJobDetailPage", () => {
 		expect(screen.getByText("2026-03-20 10:00")).toBeDefined();
 		expect(screen.getByText("2026-03-20 10:01")).toBeDefined();
 		expect(screen.getByText("2026-03-20 10:31")).toBeDefined();
-		expect(screen.getByText("25.00")).toBeDefined();
+		expect(screen.getByText("$25.00")).toBeDefined();
 	});
 
 	it("renders resume count", async () => {
@@ -256,8 +260,8 @@ describe("AdminJobDetailPage", () => {
 		expect(backLink.closest("a")?.getAttribute("href")).toBe("/admin/jobs");
 	});
 
-	it("shows dash for cost when costFlops is null", async () => {
-		mockJobRows = [makeJob({ costFlops: null, startedAt: null })];
+	it("shows dash for cost when costUsd is null", async () => {
+		mockJobRows = [makeJob({ costUsd: null, startedAt: null })];
 		const element = await AdminJobDetailPage({
 			params: Promise.resolve({ id: "db_detail1" }),
 		});

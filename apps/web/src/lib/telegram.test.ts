@@ -32,7 +32,9 @@ function makeJob(overrides: Partial<TelegramNotificationJob> = {}): TelegramNoti
 		prUrl: null,
 		startedAt: new Date("2026-03-21T10:00:00Z"),
 		finishedAt: new Date("2026-03-21T10:15:30Z"),
-		costFlops: "25.5",
+		inputTokens: null,
+		outputTokens: null,
+		costUsd: null,
 		resumeCount: 0,
 		...overrides,
 	};
@@ -167,6 +169,40 @@ describe("formatNotificationMessage", () => {
 		);
 		expect(msg).toContain("org/repo");
 	});
+
+	it("includes token/cost summary when available", () => {
+		const msg = formatNotificationMessage(
+			makeJob({ inputTokens: 125000, outputTokens: 45000, costUsd: "3.53" }),
+			"completed",
+		);
+		expect(msg).toContain("125.0K in / 45.0K out · $3.53");
+	});
+
+	it("omits token line when tokens are null", () => {
+		const msg = formatNotificationMessage(
+			makeJob({ inputTokens: null, outputTokens: null }),
+			"completed",
+		);
+		expect(msg).not.toContain("in /");
+		expect(msg).not.toContain("out");
+	});
+
+	it("omits token line when tokens are zero", () => {
+		const msg = formatNotificationMessage(
+			makeJob({ inputTokens: 0, outputTokens: 0 }),
+			"completed",
+		);
+		expect(msg).not.toContain("in /");
+	});
+
+	it("shows token line without cost when costUsd is null", () => {
+		const msg = formatNotificationMessage(
+			makeJob({ inputTokens: 50000, outputTokens: 10000, costUsd: null }),
+			"completed",
+		);
+		expect(msg).toContain("50.0K in / 10.0K out");
+		expect(msg).not.toContain("$");
+	});
 });
 
 describe("sendNotification", () => {
@@ -220,5 +256,20 @@ describe("sendNotification", () => {
 		await expect(sendNotification(makeJob(), "completed")).resolves.toBeUndefined();
 		expect(consoleSpy).toHaveBeenCalledWith("Telegram notification error:", expect.any(Error));
 		consoleSpy.mockRestore();
+	});
+
+	it("skips notification for non-meaningful status like pending", async () => {
+		await sendNotification(makeJob(), "pending");
+		expect(mockFetch).not.toHaveBeenCalled();
+	});
+
+	it("skips notification for cloning status", async () => {
+		await sendNotification(makeJob(), "cloning");
+		expect(mockFetch).not.toHaveBeenCalled();
+	});
+
+	it("skips notification for executing status", async () => {
+		await sendNotification(makeJob(), "executing");
+		expect(mockFetch).not.toHaveBeenCalled();
 	});
 });
