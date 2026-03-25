@@ -106,7 +106,7 @@ describe("AdminJobsPage", () => {
 		const element = await AdminJobsPage({ searchParams: Promise.resolve({}) });
 		render(element);
 
-		expect(screen.getByText("No jobs found.")).toBeDefined();
+		expect(screen.getByText("No results.")).toBeDefined();
 	});
 
 	it("renders job rows with correct data", async () => {
@@ -164,7 +164,7 @@ describe("AdminJobsPage", () => {
 		expect(filter.getAttribute("data-current")).toBe("completed");
 	});
 
-	it("defaults to 'all' filter for invalid status param", async () => {
+	it("defaults to 'active' filter for invalid status param", async () => {
 		mockJobRows = [];
 		const element = await AdminJobsPage({
 			searchParams: Promise.resolve({ status: "invalid_status" }),
@@ -172,7 +172,7 @@ describe("AdminJobsPage", () => {
 		render(element);
 
 		const filter = screen.getByTestId("status-filter");
-		expect(filter.getAttribute("data-current")).toBe("all");
+		expect(filter.getAttribute("data-current")).toBe("active");
 	});
 
 	it("displays duration for running jobs", async () => {
@@ -222,13 +222,15 @@ describe("AdminJobsPage", () => {
 		expect(mockWhere).toHaveBeenCalled();
 	});
 
-	it("does not call where clause for 'all' filter", async () => {
+	it("does not call where clause for job query on 'all' filter", async () => {
 		mockJobRows = [];
+		mockWhere.mockClear();
 		const element = await AdminJobsPage({
 			searchParams: Promise.resolve({ status: "all" }),
 		});
 		render(element);
 
-		expect(mockWhere).not.toHaveBeenCalled();
+		// where is called exactly 2 times for count queries (active + completed), not 3
+		expect(mockWhere).toHaveBeenCalledTimes(2);
 	});
 });
