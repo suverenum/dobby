@@ -84,17 +84,16 @@ export function formatNotificationMessage(job: TelegramNotificationJob, newStatu
 	headerLine += "</b>";
 	lines.push(headerLine);
 
-	lines.push(`${shortRepo(job.repository)} · ${job.id}`);
+	// Repo and job ID (job ID links to dashboard)
+	const env = getEnv();
+	const baseUrl = env.DOBBY_CALLBACK_URL;
+	const jobRef = baseUrl ? `<a href="${baseUrl}/admin/jobs/${job.id}">${job.id}</a>` : job.id;
+	lines.push(`${shortRepo(job.repository)} · ${jobRef}`);
+
 	lines.push(truncateTask(job.task));
 
 	if (job.prUrl) {
 		lines.push(`PR: ${job.prUrl}`);
-	}
-
-	const env = getEnv();
-	const baseUrl = env.DOBBY_CALLBACK_URL;
-	if (baseUrl) {
-		lines.push(`Dashboard: ${baseUrl}/admin/jobs/${job.id}`);
 	}
 
 	return lines.join("\n");

@@ -93,10 +93,12 @@ describe("formatNotificationMessage", () => {
 		const msg = formatNotificationMessage(job, "completed");
 
 		expect(msg).toContain("<b>Job done — 15m 30s</b>");
-		expect(msg).toContain("acme/webapp · db_test123");
+		expect(msg).toContain(
+			'acme/webapp · <a href="https://dobby.suverenum.ai/admin/jobs/db_test123">db_test123</a>',
+		);
 		expect(msg).toContain("Fix the login bug");
 		expect(msg).toContain("PR: https://github.com/acme/webapp/pull/42");
-		expect(msg).toContain("Dashboard: https://dobby.suverenum.ai/admin/jobs/db_test123");
+		expect(msg).not.toContain("Dashboard:");
 	});
 
 	it("formats failed job message", () => {
@@ -145,9 +147,11 @@ describe("formatNotificationMessage", () => {
 		expect(msg).not.toContain("PR:");
 	});
 
-	it("includes dashboard link", () => {
+	it("includes dashboard link in job ID", () => {
 		const msg = formatNotificationMessage(makeJob(), "completed");
-		expect(msg).toContain("Dashboard: https://dobby.suverenum.ai/admin/jobs/db_test123");
+		expect(msg).toContain(
+			'<a href="https://dobby.suverenum.ai/admin/jobs/db_test123">db_test123</a>',
+		);
 	});
 
 	it("handles unknown status with default emoji", () => {
@@ -161,7 +165,7 @@ describe("formatNotificationMessage", () => {
 			makeJob({ repository: "https://github.com/org/repo.git" }),
 			"completed",
 		);
-		expect(msg).toContain("org/repo · db_test123");
+		expect(msg).toContain("org/repo · ");
 	});
 });
 
