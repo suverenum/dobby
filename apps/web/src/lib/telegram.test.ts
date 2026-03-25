@@ -94,11 +94,11 @@ describe("formatNotificationMessage", () => {
 
 		expect(msg).toContain("<b>Job done — 15m 30s</b>");
 		expect(msg).toContain(
-			'acme/webapp · <a href="https://dobby.suverenum.ai/admin/jobs/db_test123">db_test123</a>',
+			'<a href="https://dobby.suverenum.ai/admin/jobs/db_test123">db_test123</a>',
 		);
+		expect(msg).toContain("acme/webapp");
 		expect(msg).toContain("Fix the login bug");
 		expect(msg).toContain("PR: https://github.com/acme/webapp/pull/42");
-		expect(msg).not.toContain("Dashboard:");
 	});
 
 	it("formats failed job message", () => {
@@ -165,7 +165,7 @@ describe("formatNotificationMessage", () => {
 			makeJob({ repository: "https://github.com/org/repo.git" }),
 			"completed",
 		);
-		expect(msg).toContain("org/repo · ");
+		expect(msg).toContain("org/repo");
 	});
 });
 
