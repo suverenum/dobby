@@ -178,44 +178,48 @@ BEDROCK_CACHE_WRITE_PRICE_PER_1M: z.coerce.number().default(6.25),
 
 ### 6.4. Runner Token Extraction
 
-OpenCode's `run --format json` outputs structured JSON events to stdout. Each LLM step emits a `step_finish` event with token counts:
+Keep `opencode run` in default format (readable logs for CloudWatch). After OpenCode finishes, query its SQLite database to sum token usage across all messages in the session.
+
+OpenCode stores per-message token data in `~/.local/share/opencode/opencode.db`:
 
 ```json
-{"type":"step_finish","sessionID":"ses_xxx","part":{
-  "cost":0.143,
-  "tokens":{"total":22976,"input":2,"output":5,"reasoning":0,"cache":{"read":0,"write":22969}}
-}}
+// Each assistant message contains:
+{"role":"assistant","cost":0.15,"tokens":{"total":23589,"input":3,"output":143,"reasoning":0,"cache":{"read":0,"write":23443}}}
 ```
 
-The runner captures the JSON stream, sums all `step_finish` token counts, and includes them in the final callback.
-
-In `runner/entrypoint.sh`, replace the current `opencode run` invocation:
+In `runner/entrypoint.sh`, after OpenCode exits:
 
 ```bash
-# Run OpenCode in JSON mode to capture token usage
-opencode run --format json "${RALPH_PROMPT}" 2>/dev/null | tee /tmp/opencode-output.json &
+OPENCODE_DB="${HOME}/.local/share/opencode/opencode.db"
 
-OPENCODE_PID=$!
-wait $OPENCODE_PID || { ... }
+if [[ -f "${OPENCODE_DB}" ]]; then
+  TOKEN_DATA=$(sqlite3 "${OPENCODE_DB}" "
+    SELECT json_object(
+      'inputTokens', COALESCE(SUM(json_extract(data, '\$.tokens.input')), 0),
+      'outputTokens', COALESCE(SUM(json_extract(data, '\$.tokens.output')), 0),
+      'cacheReadTokens', COALESCE(SUM(json_extract(data, '\$.tokens.cache.read')), 0),
+      'cacheWriteTokens', COALESCE(SUM(json_extract(data, '\$.tokens.cache.write')), 0),
+      'cost', COALESCE(SUM(json_extract(data, '\$.cost')), 0)
+    )
+    FROM message
+    WHERE json_extract(data, '\$.role') = 'assistant'
+  " 2>/dev/null || echo "{}")
 
-# Extract total token usage from all step_finish events
-TOKEN_DATA=$(grep '"type":"step_finish"' /tmp/opencode-output.json \
-  | jq -s '{
-    inputTokens: [.[].part.tokens.input // 0] | add,
-    outputTokens: [.[].part.tokens.output // 0] | add,
-    reasoningTokens: [.[].part.tokens.reasoning // 0] | add,
-    cacheReadTokens: [.[].part.tokens.cache.read // 0] | add,
-    cacheWriteTokens: [.[].part.tokens.cache.write // 0] | add,
-    cost: [.[].part.cost // 0] | add
-  }' 2>/dev/null || echo "{}")
-
-INPUT_TOKENS=$(echo "${TOKEN_DATA}" | jq -r '.inputTokens // 0')
-OUTPUT_TOKENS=$(echo "${TOKEN_DATA}" | jq -r '.outputTokens // 0')
-CACHE_READ_TOKENS=$(echo "${TOKEN_DATA}" | jq -r '.cacheReadTokens // 0')
-CACHE_WRITE_TOKENS=$(echo "${TOKEN_DATA}" | jq -r '.cacheWriteTokens // 0')
+  INPUT_TOKENS=$(echo "${TOKEN_DATA}" | jq -r '.inputTokens // 0')
+  OUTPUT_TOKENS=$(echo "${TOKEN_DATA}" | jq -r '.outputTokens // 0')
+  CACHE_READ_TOKENS=$(echo "${TOKEN_DATA}" | jq -r '.cacheReadTokens // 0')
+  CACHE_WRITE_TOKENS=$(echo "${TOKEN_DATA}" | jq -r '.cacheWriteTokens // 0')
+else
+  INPUT_TOKENS=0
+  OUTPUT_TOKENS=0
+  CACHE_READ_TOKENS=0
+  CACHE_WRITE_TOKENS=0
+fi
 ```
 
-**Verified:** OpenCode's `--format json` reliably emits `step_finish` events with `cost` and `tokens` fields for every LLM call, including subagent calls. The `cost` field is OpenCode's own cost calculation based on the model's pricing.
+**Why SQLite instead of `--format json`:** The `--format json` flag replaces readable output with raw JSON events, which would break the CloudWatch log viewer in the admin UI. Querying the DB after completion preserves beautiful logs while still capturing exact token counts.
+
+**Verified:** OpenCode's SQLite database stores `cost` and `tokens` (input, output, cache.read, cache.write) on every assistant message, including subagent calls from execute-ralph. The DB is at `~/.local/share/opencode/opencode.db` and uses the `message` table. Each container run is fresh, so all messages belong to the current job.
 
 ### 6.5. Callback Route Processing
 
