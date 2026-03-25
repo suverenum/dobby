@@ -121,6 +121,11 @@ export async function sendNotification(
 		return;
 	}
 
+	// Only notify for statuses that matter
+	if (!STATUS_HEADER[newStatus]) {
+		return;
+	}
+
 	const text = formatNotificationMessage(job, newStatus);
 	const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
 
