@@ -1,4 +1,4 @@
-# Technical Specification: Token Usage Telemetry
+# Technical Specification: Token Usage & Real Cost Tracking
 
 ## 1. Meta Information
 
@@ -8,41 +8,36 @@
 
 ## 2. Context
 
-Dobby bills callers per-minute in FLOPS tokens but pays AWS per-token via Bedrock. There is zero visibility into actual LLM costs per job. We need to track input/output token counts from the runner, store them in the DB, and expose them through the API and admin UI so we can calculate real cost and verify profitability.
+Dobby uses AWS Bedrock (Claude Opus 4.6) which charges per token. Currently there is zero visibility into actual costs — the existing FLOPS per-minute billing model is a placeholder for future MPP integration and doesn't reflect real spend. We need to replace it with actual token-based cost tracking.
 
 ## 3. Key Technical Drivers
 
-- **Cost visibility:** Know the actual AWS Bedrock cost per job (input + output tokens × price per token)
-- **Profitability analysis:** Compare FLOPS revenue (time-based) vs. Bedrock cost (token-based) per job
-- **Minimal runner changes:** The runner is a bash script + OpenCode; token extraction must be simple
-- **Backward compatibility:** Existing jobs without token data should continue to work
-- **No billing model change yet:** This is telemetry only — the FLOPS per-minute billing model stays, we just add visibility
+- **Real cost:** Track actual AWS Bedrock cost per job in USD
+- **Token visibility:** Know input/output/cache token counts per job
+- **Incremental accumulation:** Jobs can span multiple containers (Spot interruptions), tokens must accumulate across runs
+- **Simplicity:** Remove unused FLOPS billing logic, replace with real cost
+- **Backward compatibility:** Existing jobs keep their data, new fields are nullable
 
 ## 4. Current State
 
-### 4.1. Billing Model
+### 4.1. Billing Model (to be removed)
 
-Time-based: `ceil(duration_minutes) * (DOBBY_HOURLY_RATE / 60)`, capped at `DOBBY_HOURLY_RATE * DOBBY_MAX_JOB_HOURS`.
-- Default: 100 FLOPS/hour, max 6 hours = 600 FLOPS max budget
-- Cost calculated server-side from `finishedAt - startedAt`
-- File: `apps/web/src/domain/jobs/billing.ts`
+Time-based FLOPS: `ceil(duration_minutes) * (DOBBY_HOURLY_RATE / 60)`, capped at `DOBBY_HOURLY_RATE * DOBBY_MAX_JOB_HOURS`.
+- Files: `apps/web/src/domain/jobs/billing.ts`, `apps/web/src/lib/mpp.ts`
+- Env vars: `DOBBY_HOURLY_RATE`, `DOBBY_MAX_JOB_HOURS`
+- DB fields: `authorizedFlops`, `costFlops`, `mppChannelId`
 
 ### 4.2. Callback Schema
 
 The runner sends `{jobId, status, prUrl?, lastCheckpointCommit?, ecsTaskArn?}` — no token data.
 - File: `apps/web/src/app/api/internal/callback/route.ts`
 
-### 4.3. DB Schema
+### 4.3. Runner
 
-`costFlops` (numeric, nullable) is the only cost field. No token usage columns.
-- File: `apps/web/src/db/schema.ts`
-
-### 4.4. Runner
-
-Bash entrypoint runs `opencode run "..."` and pipes stdout to CloudWatch. OpenCode writes to stdout but doesn't report token usage to a file by default.
+Bash entrypoint runs `opencode run "..."`. Output goes to CloudWatch via ECS awslogs driver.
 - File: `runner/entrypoint.sh`
 
-### 4.5. AWS Bedrock Pricing (Anthropic models, on-demand, us-east-1)
+### 4.4. AWS Bedrock Pricing (Anthropic models, on-demand, us-east-1)
 
 | Model | Input /1M | Output /1M | Cache write (5m) /1M | Cache write (1h) /1M | Cache read /1M |
 |-------|-----------|------------|----------------------|----------------------|----------------|
@@ -53,97 +48,55 @@ Bash entrypoint runs `opencode run "..."` and pipes stdout to CloudWatch. OpenCo
 
 We currently use Claude Opus 4.6 (`us.anthropic.claude-opus-4-6-v1`).
 
-## 5. Considered Options
+## 5. Proposed Solution
 
-### 5.1. Option 1: Parse OpenCode stdout for token usage
+Replace FLOPS billing with real token-based cost tracking. The runner queries OpenCode's SQLite database after execution, sends token counts in the callback, and the web app calculates and stores the actual Bedrock cost in USD.
 
-- **Description:** OpenCode may log token usage summaries to stdout. Parse the CloudWatch logs after job completion to extract totals.
-- **Pros:** No runner changes needed; works retroactively on existing logs
-- **Cons:** Fragile — depends on OpenCode log format; no structured data; async parsing adds complexity; may not include per-call breakdown
+### 5.1. DB Schema Changes
 
-### 5.2. Option 2: Runner extracts tokens from OpenCode output and reports via callback
+**Remove** old billing columns:
+- `authorizedFlops`
+- `costFlops`
+- `mppChannelId`
 
-- **Description:** After OpenCode finishes, the runner parses its output or session data for token totals, then includes them in the final callback payload.
-- **Pros:** Structured data in callback; minimal infra changes; real-time (no async parsing)
-- **Cons:** Depends on OpenCode exposing token usage in a parseable format
-
-### 5.3. Option 3: Query AWS Bedrock CloudWatch metrics after job completion
-
-- **Description:** Use AWS CloudWatch metrics (Bedrock publishes `InputTokenCount` and `OutputTokenCount` per model invocation) to aggregate token usage per ECS task after the job finishes.
-- **Pros:** Authoritative data from AWS; doesn't depend on OpenCode format; captures all Bedrock calls
-- **Cons:** CloudWatch metrics have ~5min delay; requires correlating ECS task → Bedrock invocations (no built-in link); complex aggregation; may need custom dimensions
-
-### 5.4. Option 4: Use AWS Bedrock invocation logging to S3
-
-- **Description:** Enable Bedrock model invocation logging to S3. Each API call is logged with full token counts. Post-process logs after job completion.
-- **Pros:** Most accurate; captures all calls including retries; AWS-native
-- **Cons:** Setup overhead (S3 bucket, log config); async processing (logs arrive with delay); extra AWS cost; overkill for MVP
-
-### 5.5. Comparison
-
-| Criteria              | Option 1 (Parse stdout) | Option 2 (Callback) | Option 3 (CW Metrics) | Option 4 (S3 Logs) |
-|-----------------------|------------------------|---------------------|----------------------|-------------------|
-| Accuracy              | Low                    | Medium              | High                 | Highest           |
-| Implementation effort | Medium                 | Low                 | High                 | High              |
-| Real-time             | No                     | Yes                 | No (~5min delay)     | No (~15min delay) |
-| Runner changes        | None                   | Small               | None                 | None              |
-| Dependency on OpenCode| High                   | Medium              | None                 | None              |
-
-## 6. Proposed Solution
-
-**Option 2 (Callback)** for MVP, with **Option 3 (CW Metrics)** as a future cross-check.
-
-The runner extracts token usage from OpenCode's session data after execution, includes it in the final callback, the web app stores it, and the admin UI displays it.
-
-### 6.1. DB Schema Changes
-
-Add token tracking columns to the `jobs` table:
-
-```sql
-ALTER TABLE jobs ADD COLUMN input_tokens bigint;
-ALTER TABLE jobs ADD COLUMN output_tokens bigint;
-ALTER TABLE jobs ADD COLUMN cache_read_tokens bigint;
-ALTER TABLE jobs ADD COLUMN cache_write_tokens bigint;
-ALTER TABLE jobs ADD COLUMN bedrock_cost_usd numeric;
-```
-
-In Drizzle schema (`apps/web/src/db/schema.ts`):
+**Add** token tracking columns to the `jobs` table:
 
 ```ts
+// In Drizzle schema (apps/web/src/db/schema.ts):
 inputTokens: bigint("input_tokens", { mode: "number" }),
 outputTokens: bigint("output_tokens", { mode: "number" }),
 cacheReadTokens: bigint("cache_read_tokens", { mode: "number" }),
 cacheWriteTokens: bigint("cache_write_tokens", { mode: "number" }),
-bedrockCostUsd: numeric("bedrock_cost_usd"),
+costUsd: numeric("cost_usd"),
 ```
 
 All nullable — existing jobs keep null values.
 
-### 6.2. Callback Schema Extension
+### 5.2. Remove FLOPS Billing
 
-Extend the callback route to accept optional token usage fields:
+**Delete:**
+- `apps/web/src/domain/jobs/billing.ts` (calculateJobCost, calculateMaxBudget)
+- `apps/web/src/domain/jobs/billing.test.ts`
+- `apps/web/src/lib/mpp.ts` (validatePreauthorization, settlePayment)
+- `apps/web/src/lib/mpp.test.ts`
+
+**Remove from env.ts:**
+- `DOBBY_HOURLY_RATE`
+- `DOBBY_MAX_JOB_HOURS`
+- `MPP_ENDPOINT`
+
+**Remove FLOPS/MPP logic from:**
+- `apps/web/src/app/api/v1/jobs/route.ts` (preauthorization, maxBudget, settlement on failure)
+- `apps/web/src/app/api/internal/callback/route.ts` (costFlops calculation, MPP settlement)
+- `apps/web/src/app/api/admin/jobs/[id]/stop/route.ts` (costFlops calculation, MPP settlement)
+- `apps/web/src/app/api/cron/timeout/route.ts` (costFlops calculation, MPP settlement)
+
+### 5.3. Bedrock Cost Calculation
+
+New file: `apps/web/src/domain/jobs/cost.ts`
 
 ```ts
-const callbackSchema = z.object({
-    jobId: z.string().min(1),
-    status: z.enum([...]),
-    prUrl: z.string().url().optional(),
-    lastCheckpointCommit: z.string().optional(),
-    ecsTaskArn: z.string().optional(),
-    // NEW: token usage telemetry
-    inputTokens: z.number().int().nonnegative().optional(),
-    outputTokens: z.number().int().nonnegative().optional(),
-    cacheReadTokens: z.number().int().nonnegative().optional(),
-    cacheWriteTokens: z.number().int().nonnegative().optional(),
-});
-```
-
-### 6.3. Bedrock Cost Calculation
-
-Add cost calculation function to `apps/web/src/domain/jobs/billing.ts`:
-
-```ts
-interface BedrockTokenUsage {
+interface TokenUsage {
     inputTokens: number;
     outputTokens: number;
     cacheReadTokens?: number;
@@ -151,13 +104,13 @@ interface BedrockTokenUsage {
 }
 
 interface BedrockPricing {
-    inputPer1M: number;   // default: 5.00 (Opus 4.6)
-    outputPer1M: number;  // default: 25.00 (Opus 4.6)
+    inputPer1M: number;      // default: 5.00 (Opus 4.6)
+    outputPer1M: number;     // default: 25.00 (Opus 4.6)
     cacheReadPer1M: number;  // default: 0.50 (Opus 4.6)
     cacheWritePer1M: number; // default: 6.25 (Opus 4.6, 5m TTL)
 }
 
-function calculateBedrockCost(usage: BedrockTokenUsage, pricing: BedrockPricing): number {
+export function calculateBedrockCost(usage: TokenUsage, pricing: BedrockPricing): number {
     return (
         (usage.inputTokens / 1_000_000) * pricing.inputPer1M +
         (usage.outputTokens / 1_000_000) * pricing.outputPer1M +
@@ -167,7 +120,7 @@ function calculateBedrockCost(usage: BedrockTokenUsage, pricing: BedrockPricing)
 }
 ```
 
-Pricing constants stored as env vars with defaults:
+Pricing env vars with defaults:
 
 ```ts
 BEDROCK_INPUT_PRICE_PER_1M: z.coerce.number().default(5.00),
@@ -176,110 +129,159 @@ BEDROCK_CACHE_READ_PRICE_PER_1M: z.coerce.number().default(0.50),
 BEDROCK_CACHE_WRITE_PRICE_PER_1M: z.coerce.number().default(6.25),
 ```
 
-### 6.4. Runner Token Extraction
+### 5.4. Callback Schema Extension
 
-Keep `opencode run` in default format (readable logs for CloudWatch). After OpenCode finishes, query its SQLite database to sum token usage across all messages in the session.
+```ts
+const callbackSchema = z.object({
+    jobId: z.string().min(1),
+    status: z.enum([...]),
+    prUrl: z.string().url().optional(),
+    lastCheckpointCommit: z.string().optional(),
+    ecsTaskArn: z.string().optional(),
+    // Token usage telemetry
+    inputTokens: z.number().int().nonnegative().optional(),
+    outputTokens: z.number().int().nonnegative().optional(),
+    cacheReadTokens: z.number().int().nonnegative().optional(),
+    cacheWriteTokens: z.number().int().nonnegative().optional(),
+});
+```
+
+### 5.5. Runner Token Extraction
+
+Keep `opencode run` in default format (readable logs for CloudWatch). After OpenCode finishes (or is interrupted), query its SQLite database to sum all token usage.
 
 OpenCode stores per-message token data in `~/.local/share/opencode/opencode.db`:
 
 ```json
-// Each assistant message contains:
 {"role":"assistant","cost":0.15,"tokens":{"total":23589,"input":3,"output":143,"reasoning":0,"cache":{"read":0,"write":23443}}}
 ```
 
-In `runner/entrypoint.sh`, after OpenCode exits:
+Each container is fresh, so all messages in the DB belong to the current job — no session filtering needed.
+
+Reusable function called from both normal completion and SIGTERM handler:
 
 ```bash
-OPENCODE_DB="${HOME}/.local/share/opencode/opencode.db"
+extract_token_usage() {
+  OPENCODE_DB="${HOME}/.local/share/opencode/opencode.db"
 
-if [[ -f "${OPENCODE_DB}" ]]; then
-  TOKEN_DATA=$(sqlite3 "${OPENCODE_DB}" "
-    SELECT json_object(
-      'inputTokens', COALESCE(SUM(json_extract(data, '\$.tokens.input')), 0),
-      'outputTokens', COALESCE(SUM(json_extract(data, '\$.tokens.output')), 0),
-      'cacheReadTokens', COALESCE(SUM(json_extract(data, '\$.tokens.cache.read')), 0),
-      'cacheWriteTokens', COALESCE(SUM(json_extract(data, '\$.tokens.cache.write')), 0),
-      'cost', COALESCE(SUM(json_extract(data, '\$.cost')), 0)
-    )
-    FROM message
-    WHERE json_extract(data, '\$.role') = 'assistant'
-  " 2>/dev/null || echo "{}")
+  if [[ -f "${OPENCODE_DB}" ]]; then
+    TOKEN_DATA=$(sqlite3 "${OPENCODE_DB}" "
+      SELECT json_object(
+        'inputTokens', COALESCE(SUM(json_extract(data, '\$.tokens.input')), 0),
+        'outputTokens', COALESCE(SUM(json_extract(data, '\$.tokens.output')), 0),
+        'cacheReadTokens', COALESCE(SUM(json_extract(data, '\$.tokens.cache.read')), 0),
+        'cacheWriteTokens', COALESCE(SUM(json_extract(data, '\$.tokens.cache.write')), 0)
+      )
+      FROM message
+      WHERE json_extract(data, '\$.role') = 'assistant'
+    " 2>/dev/null || echo "{}")
 
-  INPUT_TOKENS=$(echo "${TOKEN_DATA}" | jq -r '.inputTokens // 0')
-  OUTPUT_TOKENS=$(echo "${TOKEN_DATA}" | jq -r '.outputTokens // 0')
-  CACHE_READ_TOKENS=$(echo "${TOKEN_DATA}" | jq -r '.cacheReadTokens // 0')
-  CACHE_WRITE_TOKENS=$(echo "${TOKEN_DATA}" | jq -r '.cacheWriteTokens // 0')
-else
-  INPUT_TOKENS=0
-  OUTPUT_TOKENS=0
-  CACHE_READ_TOKENS=0
-  CACHE_WRITE_TOKENS=0
-fi
-```
-
-**Why SQLite instead of `--format json`:** The `--format json` flag replaces readable output with raw JSON events, which would break the CloudWatch log viewer in the admin UI. Querying the DB after completion preserves beautiful logs while still capturing exact token counts.
-
-**Verified:** OpenCode's SQLite database stores `cost` and `tokens` (input, output, cache.read, cache.write) on every assistant message, including subagent calls from execute-ralph. The DB is at `~/.local/share/opencode/opencode.db` and uses the `message` table. Each container run is fresh, so all messages belong to the current job.
-
-### 6.5. Callback Route Processing
-
-In the callback route, on terminal status:
-
-```ts
-// Calculate Bedrock cost if token data is provided
-if (input.inputTokens !== undefined || input.outputTokens !== undefined) {
-    const bedrockCost = calculateBedrockCost(
-        {
-            inputTokens: input.inputTokens ?? 0,
-            outputTokens: input.outputTokens ?? 0,
-            cacheReadTokens: input.cacheReadTokens,
-            cacheWriteTokens: input.cacheWriteTokens,
-        },
-        {
-            inputPer1M: env.BEDROCK_INPUT_PRICE_PER_1M,
-            outputPer1M: env.BEDROCK_OUTPUT_PRICE_PER_1M,
-            cacheReadPer1M: env.BEDROCK_CACHE_READ_PRICE_PER_1M,
-            cacheWritePer1M: env.BEDROCK_CACHE_WRITE_PRICE_PER_1M,
-        }
-    );
-    updateFields.inputTokens = input.inputTokens ?? 0;
-    updateFields.outputTokens = input.outputTokens ?? 0;
-    updateFields.cacheReadTokens = input.cacheReadTokens ?? null;
-    updateFields.cacheWriteTokens = input.cacheWriteTokens ?? null;
-    updateFields.bedrockCostUsd = bedrockCost.toFixed(6);
+    INPUT_TOKENS=$(echo "${TOKEN_DATA}" | jq -r '.inputTokens // 0')
+    OUTPUT_TOKENS=$(echo "${TOKEN_DATA}" | jq -r '.outputTokens // 0')
+    CACHE_READ_TOKENS=$(echo "${TOKEN_DATA}" | jq -r '.cacheReadTokens // 0')
+    CACHE_WRITE_TOKENS=$(echo "${TOKEN_DATA}" | jq -r '.cacheWriteTokens // 0')
+  else
+    INPUT_TOKENS=0
+    OUTPUT_TOKENS=0
+    CACHE_READ_TOKENS=0
+    CACHE_WRITE_TOKENS=0
+  fi
 }
 ```
 
-### 6.6. API Response Extension
+Called from both paths:
 
-Add to `GET /api/v1/jobs/:id` response:
+```bash
+handle_sigterm() {
+  extract_token_usage
+  callback "interrupted" \
+    "\"inputTokens\": ${INPUT_TOKENS}" \
+    "\"outputTokens\": ${OUTPUT_TOKENS}" \
+    "\"cacheReadTokens\": ${CACHE_READ_TOKENS}" \
+    "\"cacheWriteTokens\": ${CACHE_WRITE_TOKENS}"
+}
 
-```ts
-inputTokens: job.inputTokens,
-outputTokens: job.outputTokens,
-cacheReadTokens: job.cacheReadTokens,
-cacheWriteTokens: job.cacheWriteTokens,
-bedrockCostUsd: job.bedrockCostUsd,
+# Normal completion
+extract_token_usage
+callback "completed" \
+  "\"inputTokens\": ${INPUT_TOKENS}" \
+  "\"outputTokens\": ${OUTPUT_TOKENS}" \
+  "\"cacheReadTokens\": ${CACHE_READ_TOKENS}" \
+  "\"cacheWriteTokens\": ${CACHE_WRITE_TOKENS}"
 ```
 
-### 6.7. Admin UI Changes
+**Why SQLite instead of `--format json`:** The `--format json` flag replaces readable output with raw JSON events, which would break the CloudWatch log viewer in the admin UI.
 
-On the job detail page (`apps/web/src/app/admin/jobs/[id]/page.tsx`), add a "Cost Breakdown" section:
+### 5.6. Callback Route: Incremental Token Accumulation
+
+A single job can span multiple containers (Spot interruptions, auto-resume). Each container reports its partial token counts. The callback route **increments** existing values — if null/zero, sets; if already has data, adds.
+
+```ts
+if (input.inputTokens !== undefined || input.outputTokens !== undefined) {
+    const existingInput = Number(job.inputTokens) || 0;
+    const existingOutput = Number(job.outputTokens) || 0;
+    const existingCacheRead = Number(job.cacheReadTokens) || 0;
+    const existingCacheWrite = Number(job.cacheWriteTokens) || 0;
+
+    const totalInput = existingInput + (input.inputTokens ?? 0);
+    const totalOutput = existingOutput + (input.outputTokens ?? 0);
+    const totalCacheRead = existingCacheRead + (input.cacheReadTokens ?? 0);
+    const totalCacheWrite = existingCacheWrite + (input.cacheWriteTokens ?? 0);
+
+    updateFields.inputTokens = totalInput;
+    updateFields.outputTokens = totalOutput;
+    updateFields.cacheReadTokens = totalCacheRead;
+    updateFields.cacheWriteTokens = totalCacheWrite;
+
+    // Always recalculate cost from accumulated totals (avoids float drift)
+    updateFields.costUsd = calculateBedrockCost(
+        { inputTokens: totalInput, outputTokens: totalOutput,
+          cacheReadTokens: totalCacheRead, cacheWriteTokens: totalCacheWrite },
+        { inputPer1M: env.BEDROCK_INPUT_PRICE_PER_1M, ... }
+    ).toFixed(6);
+}
+```
+
+**Example: Job with 2 Spot interruptions (3 runs total)**
+
+| Run | Status | Input (this run) | Output (this run) | DB input_tokens | DB output_tokens | DB cost_usd |
+|-----|--------|-----------------|-------------------|----------------|-----------------|-------------|
+| 1 | interrupted | 50,000 | 10,000 | 50,000 | 10,000 | $0.50 |
+| 2 | interrupted | 80,000 | 20,000 | 130,000 | 30,000 | $1.40 |
+| 3 | completed | 40,000 | 15,000 | 170,000 | 45,000 | $1.98 |
+
+### 5.7. API Response
+
+`GET /api/v1/jobs/:id` response:
+
+```ts
+{
+    id, status, repository, task, prUrl,
+    startedAt, finishedAt,
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    costUsd,
+}
+```
+
+### 5.8. Admin UI Changes
+
+On the job detail page, replace FLOPS cost with real cost breakdown:
 
 | Metric | Value |
 |--------|-------|
 | Duration | 8m 30s |
-| FLOPS charged | 15 |
 | Input tokens | 125,000 |
 | Output tokens | 45,000 |
 | Cache read tokens | 80,000 |
 | Cache write tokens | 30,000 |
-| Bedrock cost (USD) | $3.52 |
-| Margin | $X.XX (FLOPS revenue - Bedrock cost) |
+| Cost (USD) | $3.52 |
 
-### 6.8. Telegram Notification Update
+### 5.9. Telegram Notification
 
-Add Bedrock cost to the notification (only if available):
+Add cost to completed notifications (only if available):
 
 ```
 ✅ Job done — 8m 30s
@@ -287,33 +289,38 @@ db_WODxYC7J
 suverenum/dobby
 
 Add input validation to the /api/users endpoint
-Tokens: 125K in / 45K out · $3.52
+125K in / 45K out · $3.52
 
 PR: https://github.com/suverenum/dobby/pull/42
 ```
 
-### 6.K+1. Pros and Cons
+### 5.10. Job Submission (simplified)
 
-- **Pros:** Real cost visibility per job; simple implementation; backward compatible; enables profitability analysis
-- **Cons:** Depends on OpenCode session format (may break with updates); token extraction is best-effort (could miss tokens from subagent calls); Bedrock pricing hardcoded as env defaults (needs manual updates when pricing changes)
-- **Consequences:** Can inform future billing model changes (switch from per-minute to per-token or hybrid); enables setting DOBBY_HOURLY_RATE based on actual costs
+Remove MPP preauthorization from `POST /api/v1/jobs`. The route already has Bearer token auth. No budget calculation needed — cost is tracked after the fact, not pre-authorized.
 
-## 7. Testing Strategy
+### Pros and Cons
 
-### 7.1. Unit Tests
+- **Pros:** Real cost visibility; simpler billing code; accurate per-job cost; handles Spot interruptions; no fake FLOPS math
+- **Cons:** Depends on OpenCode SQLite schema (may change); no pre-authorization (can't cap spend per job); pricing env vars need manual updates
+- **Consequences:** When MPP is ready, we add it back on top of real cost data instead of fake FLOPS. The actual token counts make future pricing models much easier.
 
-- `billing.test.ts`: Test `calculateBedrockCost()` with various token counts, zero values, missing cache tokens
-- `callback/route.test.ts`: Test callback with and without token fields; verify DB update includes token data and computed cost
-- `telegram.test.ts`: Test notification format with and without token data
+## 6. Testing Strategy
 
-### 7.2. Integration Tests
+### 6.1. Unit Tests
 
-- Submit a job, send callback with token data, verify `GET /api/v1/jobs/:id` returns token fields and bedrock cost
-- Verify existing callbacks without token fields still work (backward compat)
+- `cost.test.ts`: Test `calculateBedrockCost()` with various token counts, zero values, missing cache tokens
+- `callback/route.test.ts`: Test callback with token fields; verify incremental accumulation (null → set, existing → add); verify cost calculation
+- `telegram.test.ts`: Test notification format with and without token/cost data
 
-## 8. Definition of Done
+### 6.2. Integration Tests
 
-### Universal (always required)
+- Submit job, send callback with token data, verify `GET /api/v1/jobs/:id` returns correct totals
+- Send multiple callbacks (simulating Spot interruptions), verify tokens accumulate
+- Verify existing callbacks without token fields still work
+
+## 7. Definition of Done
+
+### Universal
 
 - [ ] Tests pass (`bun run test`)
 - [ ] TypeScript compiles cleanly (`bun run typecheck`)
@@ -322,26 +329,24 @@ PR: https://github.com/suverenum/dobby/pull/42
 
 ### Feature-Specific
 
-- [ ] DB migration adds token columns (nullable)
-- [ ] Callback route accepts and stores token usage
-- [ ] Bedrock cost calculated and stored automatically
+- [ ] FLOPS billing code removed (billing.ts, mpp.ts, related env vars)
+- [ ] DB migration: remove old columns, add token columns (nullable)
+- [ ] Callback route accepts token data and accumulates incrementally
+- [ ] Bedrock cost calculated from accumulated token totals
 - [ ] `GET /api/v1/jobs/:id` returns token and cost fields
-- [ ] Runner extracts token usage from OpenCode session data
+- [ ] Runner extracts token usage from OpenCode SQLite DB
+- [ ] Runner sends tokens on both normal completion and SIGTERM
 - [ ] Runner Docker image rebuilt and pushed to ECR
 - [ ] Admin job detail page shows cost breakdown
-- [ ] Telegram notification includes token summary (when available)
+- [ ] Telegram notification includes token/cost summary
 - [ ] Existing jobs without token data display correctly (null handling)
+- [ ] Job submission works without MPP preauthorization
 
-## 9. Alternatives Not Chosen
-
-- **Option 1 (Parse stdout):** Too fragile, depends on unstructured log format
-- **Option 3 (CloudWatch Metrics):** Too complex for MVP, 5-min delay, hard to correlate ECS task → Bedrock calls
-- **Option 4 (S3 invocation logs):** Most accurate but heavy setup, async processing, overkill for cost visibility
-
-## 10. References
+## 8. References
 
 - [AWS Bedrock Pricing](https://aws.amazon.com/bedrock/pricing/) — Anthropic section
 - Claude Opus 4.6 on Bedrock: $5/M input, $25/M output, $6.25/M cache write (5m), $0.50/M cache read
+- OpenCode SQLite DB: `~/.local/share/opencode/opencode.db`, table `message`, field `data` contains `tokens` and `cost`
 - Current billing code: `apps/web/src/domain/jobs/billing.ts`
 - Current callback route: `apps/web/src/app/api/internal/callback/route.ts`
 - DB schema: `apps/web/src/db/schema.ts`
