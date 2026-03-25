@@ -31,6 +31,9 @@ storybook-static/
 .DS_Store
 *.tsbuildinfo
 
+# coverage
+coverage/
+
 # vercel
 .vercel
 
