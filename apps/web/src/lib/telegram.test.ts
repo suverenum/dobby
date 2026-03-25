@@ -98,7 +98,7 @@ describe("formatNotificationMessage", () => {
 		);
 		expect(msg).toContain("acme/webapp");
 		expect(msg).toContain("Fix the login bug");
-		expect(msg).toContain("PR: https://github.com/acme/webapp/pull/42");
+		expect(msg).toContain('📦 <a href="https://github.com/acme/webapp/pull/42">PR-42</a>');
 	});
 
 	it("formats failed job message", () => {
