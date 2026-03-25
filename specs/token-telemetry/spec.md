@@ -8,7 +8,7 @@
 
 ## 2. Context
 
-Dobby uses AWS Bedrock (Claude Opus 4.6) which charges per token. Currently there is zero visibility into actual costs — the existing FLOPS per-minute billing model is a placeholder for future MPP integration and doesn't reflect real spend. We need to replace it with actual token-based cost tracking.
+Dobby uses AWS Bedrock (Claude Opus 4) which charges per token. Currently there is zero visibility into actual costs — the existing FLOPS per-minute billing model is a placeholder for future MPP integration and doesn't reflect real spend. We need to replace it with actual token-based cost tracking.
 
 ## 3. Key Technical Drivers
 
@@ -24,7 +24,7 @@ Dobby uses AWS Bedrock (Claude Opus 4.6) which charges per token. Currently ther
 
 Time-based FLOPS: `ceil(duration_minutes) * (DOBBY_HOURLY_RATE / 60)`, capped at `DOBBY_HOURLY_RATE * DOBBY_MAX_JOB_HOURS`.
 - Files: `apps/web/src/domain/jobs/billing.ts`, `apps/web/src/lib/mpp.ts`
-- Env vars: `DOBBY_HOURLY_RATE`, `DOBBY_MAX_JOB_HOURS`
+- Env vars: `DOBBY_HOURLY_RATE`, `DOBBY_MAX_JOB_HOURS`, `MPP_ENDPOINT`, `MPP_API_KEY`
 - DB fields: `authorizedFlops`, `costFlops`, `mppChannelId`
 
 ### 4.2. Callback Schema
@@ -36,17 +36,18 @@ The runner sends `{jobId, status, prUrl?, lastCheckpointCommit?, ecsTaskArn?}` �
 
 Bash entrypoint runs `opencode run "..."`. Output goes to CloudWatch via ECS awslogs driver.
 - File: `runner/entrypoint.sh`
+- Dependencies available: `jq`, `sqlite3` (both in Dockerfile)
 
 ### 4.4. AWS Bedrock Pricing (Anthropic models, on-demand, us-east-1)
 
 | Model | Input /1M | Output /1M | Cache write (5m) /1M | Cache write (1h) /1M | Cache read /1M |
 |-------|-----------|------------|----------------------|----------------------|----------------|
-| Claude Sonnet 4.6 | $3.00 | $15.00 | $3.75 | $6.00 | $0.30 |
-| Claude Sonnet 4.6 Long Context | $3.00 | $15.00 | $3.75 | $6.00 | $0.30 |
-| Claude Opus 4.6 | $5.00 | $25.00 | $6.25 | $10.00 | $0.50 |
-| Claude Opus 4.6 Long Context | $5.00 | $25.00 | $6.25 | $10.00 | $0.50 |
+| Claude Sonnet 4 | $3.00 | $15.00 | $3.75 | $6.00 | $0.30 |
+| Claude Sonnet 4 Long Context | $3.00 | $15.00 | $3.75 | $6.00 | $0.30 |
+| Claude Opus 4 | $5.00 | $25.00 | $6.25 | $10.00 | $0.50 |
+| Claude Opus 4 Long Context | $5.00 | $25.00 | $6.25 | $10.00 | $0.50 |
 
-We currently use Claude Opus 4.6 (`us.anthropic.claude-opus-4-6-v1`).
+We currently use Claude Opus 4 (Bedrock model ID: `us.anthropic.claude-opus-4-6-v1`, the `-6` is a Bedrock version suffix, not the model name).
 
 ## 5. Proposed Solution
 
@@ -55,7 +56,7 @@ Replace FLOPS billing with real token-based cost tracking. The runner queries Op
 ### 5.1. DB Schema Changes
 
 **Remove** old billing columns:
-- `authorizedFlops`
+- `authorizedFlops` (note: currently `NOT NULL` — deploy code changes before running migration)
 - `costFlops`
 - `mppChannelId`
 
@@ -63,35 +64,51 @@ Replace FLOPS billing with real token-based cost tracking. The runner queries Op
 
 ```ts
 // In Drizzle schema (apps/web/src/db/schema.ts):
-inputTokens: bigint("input_tokens", { mode: "number" }),
-outputTokens: bigint("output_tokens", { mode: "number" }),
-cacheReadTokens: bigint("cache_read_tokens", { mode: "number" }),
-cacheWriteTokens: bigint("cache_write_tokens", { mode: "number" }),
-bedrockCostUsd: numeric("bedrock_cost_usd"),
-containerCostUsd: numeric("container_cost_usd"),
-costUsd: numeric("cost_usd"), // total: bedrock + container
+inputTokens: integer("input_tokens"),
+outputTokens: integer("output_tokens"),
+cacheReadTokens: integer("cache_read_tokens"),
+cacheWriteTokens: integer("cache_write_tokens"),
+bedrockCostUsd: numeric("bedrock_cost_usd", { precision: 12, scale: 6 }),
+containerCostUsd: numeric("container_cost_usd", { precision: 12, scale: 6 }),
+costUsd: numeric("cost_usd", { precision: 12, scale: 6 }), // total: bedrock + container
 ```
 
-All nullable — existing jobs keep null values.
+All nullable — existing jobs keep null values. Token counts use `integer` (max ~2.1 billion, sufficient for per-job usage).
+
+**Deployment order:** Deploy code changes first (remove column from INSERT/SELECT), then run migration to drop old columns. This avoids INSERT failures from referencing dropped columns.
 
 ### 5.2. Remove FLOPS Billing
 
-**Delete:**
-- `apps/web/src/domain/jobs/billing.ts` (calculateJobCost, calculateMaxBudget)
+**Delete files:**
+- `apps/web/src/domain/jobs/billing.ts`
 - `apps/web/src/domain/jobs/billing.test.ts`
-- `apps/web/src/lib/mpp.ts` (validatePreauthorization, settlePayment)
+- `apps/web/src/lib/mpp.ts`
 - `apps/web/src/lib/mpp.test.ts`
 
 **Remove from env.ts:**
 - `DOBBY_HOURLY_RATE`
 - `DOBBY_MAX_JOB_HOURS`
 - `MPP_ENDPOINT`
+- `MPP_API_KEY`
 
 **Remove FLOPS/MPP logic from:**
-- `apps/web/src/app/api/v1/jobs/route.ts` (preauthorization, maxBudget, settlement on failure)
+- `apps/web/src/app/api/v1/jobs/route.ts` (preauthorization, maxBudget, settlement, MPP-Token auth path)
+- `apps/web/src/app/api/v1/jobs/route.test.ts` (authorizedFlops, mppChannelId in fixtures)
 - `apps/web/src/app/api/internal/callback/route.ts` (costFlops calculation, MPP settlement)
-- `apps/web/src/app/api/admin/jobs/[id]/stop/route.ts` (costFlops calculation, MPP settlement)
-- `apps/web/src/app/api/cron/timeout/route.ts` (costFlops calculation, MPP settlement)
+- `apps/web/src/app/api/internal/callback/route.test.ts` (costFlops, mppChannelId in fixtures)
+- `apps/web/src/app/api/admin/jobs/[id]/stop/route.ts` (costFlops calculation, MPP settlement, revert path)
+- `apps/web/src/app/api/admin/jobs/[id]/stop/route.test.ts` (costFlops, mppChannelId in fixtures)
+- `apps/web/src/app/api/cron/timeout/route.ts` (costFlops calculation, MPP settlement, revert path)
+- `apps/web/src/app/api/cron/timeout/route.test.ts` (costFlops, authorizedFlops in fixtures)
+- `apps/web/src/app/api/internal/ecs-event/route.test.ts` (authorizedFlops, costFlops, mppChannelId in fixtures)
+- `apps/web/src/app/api/v1/jobs/[id]/route.ts` (costFlops in response)
+- `apps/web/src/app/api/v1/jobs/[id]/route.test.ts` (costFlops in fixtures)
+- `apps/web/src/domain/jobs/index.ts` (barrel exports for billing functions)
+- `apps/web/src/domain/jobs/ecs.test.ts` (authorizedFlops, costFlops, mppChannelId in fixtures)
+
+**Update `TelegramNotificationJob` interface:**
+- `apps/web/src/lib/telegram.ts` — remove `costFlops`, add `inputTokens`, `outputTokens`, `costUsd`
+- `apps/web/src/lib/telegram.test.ts` — update fixtures
 
 ### 5.3. Cost Calculation
 
@@ -108,10 +125,10 @@ interface TokenUsage {
 }
 
 interface BedrockPricing {
-    inputPer1M: number;      // default: 5.00 (Opus 4.6)
-    outputPer1M: number;     // default: 25.00 (Opus 4.6)
-    cacheReadPer1M: number;  // default: 0.50 (Opus 4.6)
-    cacheWritePer1M: number; // default: 6.25 (Opus 4.6, 5m TTL)
+    inputPer1M: number;      // default: 5.00 (Opus 4)
+    outputPer1M: number;     // default: 25.00 (Opus 4)
+    cacheReadPer1M: number;  // default: 0.50 (Opus 4)
+    cacheWritePer1M: number; // default: 6.25 (Opus 4, 5m TTL)
 }
 
 export function calculateBedrockCost(usage: TokenUsage, pricing: BedrockPricing): number {
@@ -126,11 +143,13 @@ export function calculateBedrockCost(usage: TokenUsage, pricing: BedrockPricing)
 
 #### Container Cost (time-based)
 
-Fargate Spot pricing is fixed per container size. We always run the same config:
+Fargate Spot pricing is fixed per container size. We always run the same config (derived from `DOBBY_VM_CPU`, which is an existing env var that must NOT be removed):
 - 4 vCPU × $0.01334058/hr = $0.05336/hr
-- 16 GB RAM × $0.00146489/hr = $0.02344/hr
-- 1 GB ephemeral (over 20GB base) × $0.000111/hr = $0.000111/hr
+- 16 GB RAM (4 GB per vCPU) × $0.00146489/hr = $0.02344/hr
+- 1 GB ephemeral (21 GB total - 20 GB base) × $0.000111/hr = $0.000111/hr
 - **Total: ~$0.077/hr**
+
+Note: memory is `DOBBY_VM_CPU * 4` and ephemeral overage is `21 - 20 = 1`. If ECS config changes, these values must be updated to match.
 
 ```ts
 interface FargatePricing {
@@ -188,7 +207,7 @@ const callbackSchema = z.object({
 
 Keep `opencode run` in default format (readable logs for CloudWatch). After OpenCode finishes (or is interrupted), query its SQLite database to sum all token usage.
 
-OpenCode stores per-message token data in `~/.local/share/opencode/opencode.db`:
+OpenCode stores per-message token data in `${XDG_DATA_HOME:-$HOME/.local/share}/opencode/opencode.db`:
 
 ```json
 {"role":"assistant","cost":0.15,"tokens":{"total":23589,"input":3,"output":143,"reasoning":0,"cache":{"read":0,"write":23443}}}
@@ -200,18 +219,18 @@ Reusable function called from both normal completion and SIGTERM handler:
 
 ```bash
 extract_token_usage() {
-  OPENCODE_DB="${HOME}/.local/share/opencode/opencode.db"
+  OPENCODE_DB="${XDG_DATA_HOME:-$HOME/.local/share}/opencode/opencode.db"
 
   if [[ -f "${OPENCODE_DB}" ]]; then
     TOKEN_DATA=$(sqlite3 "${OPENCODE_DB}" "
       SELECT json_object(
-        'inputTokens', COALESCE(SUM(json_extract(data, '\$.tokens.input')), 0),
-        'outputTokens', COALESCE(SUM(json_extract(data, '\$.tokens.output')), 0),
-        'cacheReadTokens', COALESCE(SUM(json_extract(data, '\$.tokens.cache.read')), 0),
-        'cacheWriteTokens', COALESCE(SUM(json_extract(data, '\$.tokens.cache.write')), 0)
+        'inputTokens', COALESCE(SUM(json_extract(data, '$.tokens.input')), 0),
+        'outputTokens', COALESCE(SUM(json_extract(data, '$.tokens.output')), 0),
+        'cacheReadTokens', COALESCE(SUM(json_extract(data, '$.tokens.cache.read')), 0),
+        'cacheWriteTokens', COALESCE(SUM(json_extract(data, '$.tokens.cache.write')), 0)
       )
       FROM message
-      WHERE json_extract(data, '\$.role') = 'assistant'
+      WHERE json_extract(data, '$.role') = 'assistant'
     " 2>/dev/null || echo "{}")
 
     INPUT_TOKENS=$(echo "${TOKEN_DATA}" | jq -r '.inputTokens // 0')
@@ -227,7 +246,7 @@ extract_token_usage() {
 }
 ```
 
-Called from both paths:
+The `callback()` helper function in the entrypoint must be updated to accept the token fields as additional JSON key-value pairs. Called from both paths:
 
 ```bash
 handle_sigterm() {
@@ -254,6 +273,8 @@ callback "completed" \
 
 A single job can span multiple containers (Spot interruptions, auto-resume). Each container reports its partial token counts. The callback route **increments** existing values — if null/zero, sets; if already has data, adds.
 
+Token accumulation must only happen after the stale-callback guards pass (existing `ecsTaskArn` matching logic).
+
 ```ts
 if (input.inputTokens !== undefined || input.outputTokens !== undefined) {
     const existingInput = Number(job.inputTokens) || 0;
@@ -271,7 +292,7 @@ if (input.inputTokens !== undefined || input.outputTokens !== undefined) {
     updateFields.cacheReadTokens = totalCacheRead;
     updateFields.cacheWriteTokens = totalCacheWrite;
 
-    // Always recalculate cost from accumulated totals (avoids float drift)
+    // Always recalculate Bedrock cost from accumulated totals (avoids float drift)
     const bedrockCost = calculateBedrockCost(
         { inputTokens: totalInput, outputTokens: totalOutput,
           cacheReadTokens: totalCacheRead, cacheWriteTokens: totalCacheWrite },
@@ -297,11 +318,15 @@ if (input.inputTokens !== undefined || input.outputTokens !== undefined) {
 
 **Example: Job with 2 Spot interruptions (3 runs total)**
 
-| Run | Status | Input (this run) | Output (this run) | DB input_tokens | DB output_tokens | DB cost_usd |
-|-----|--------|-----------------|-------------------|----------------|-----------------|-------------|
-| 1 | interrupted | 50,000 | 10,000 | 50,000 | 10,000 | $0.50 |
-| 2 | interrupted | 80,000 | 20,000 | 130,000 | 30,000 | $1.40 |
-| 3 | completed | 40,000 | 15,000 | 170,000 | 45,000 | $1.98 |
+Bedrock cost only shown (container cost omitted for clarity):
+
+| Run | Status | Input (this run) | Output (this run) | DB input_tokens | DB output_tokens | DB bedrock_cost_usd |
+|-----|--------|-----------------|-------------------|----------------|-----------------|---------------------|
+| 1 | interrupted | 50,000 | 10,000 | 50,000 | 10,000 | $0.500000 |
+| 2 | interrupted | 80,000 | 20,000 | 130,000 | 30,000 | $1.400000 |
+| 3 | completed | 40,000 | 15,000 | 170,000 | 45,000 | $1.975000 |
+
+Run 3 check: (170K × $5/1M) + (45K × $25/1M) = $0.85 + $1.125 = $1.975. `costUsd` would add the container cost on top.
 
 ### 5.7. API Response
 
@@ -338,7 +363,9 @@ On the job detail page, replace FLOPS cost with real cost breakdown:
 
 ### 5.9. Telegram Notification
 
-Add cost to completed notifications (only if available):
+Update `TelegramNotificationJob` interface: remove `costFlops`, `resumeCount`; add `inputTokens`, `outputTokens`, `costUsd`. Update all call sites that construct the notification job object (callback route, stop route, timeout route, job creation route).
+
+Add cost to completed notifications (only if `costUsd` is available):
 
 ```
 ✅ Job done — 8m 30s
@@ -348,14 +375,16 @@ suverenum/dobby
 Add input validation to the /api/users endpoint
 125K in / 45K out · $3.53
 
-PR: https://github.com/suverenum/dobby/pull/42
+📦 PR-42
 ```
+
+Token formatting: `< 1000` → raw number, `≥ 1000` → "1.2K", `≥ 1,000,000` → "1.2M". Cost: `$X.XX` (2 decimal places for display).
 
 ### 5.10. Job Submission (simplified)
 
-Remove MPP preauthorization from `POST /api/v1/jobs`. The route already has Bearer token auth. No budget calculation needed — cost is tracked after the fact, not pre-authorized.
+Remove MPP preauthorization from `POST /api/v1/jobs`. The route already has Bearer token auth. The entire MPP-Token auth path is removed (including the 402 response for missing MPP-Token when Bearer auth fails). No budget calculation needed — cost is tracked after the fact, not pre-authorized.
 
-### Pros and Cons
+### 5.11. Pros and Cons
 
 - **Pros:** Real cost visibility; simpler billing code; accurate per-job cost; handles Spot interruptions; no fake FLOPS math
 - **Cons:** Depends on OpenCode SQLite schema (may change); no pre-authorization (can't cap spend per job); pricing env vars need manual updates
@@ -388,12 +417,12 @@ Remove MPP preauthorization from `POST /api/v1/jobs`. The route already has Bear
 
 **Token acceptance:**
 - Callback with all token fields → stored correctly
-- Callback with only inputTokens/outputTokens → cache fields stay null
+- Callback with only inputTokens/outputTokens (no cache fields) → cache columns set to 0 (not null), because accumulation logic runs
 - Callback with no token fields → existing behavior, no token columns touched
 - Callback with zero token values → stored as 0, not null
 
 **Incremental accumulation:**
-- First callback (null in DB) + tokens → sets values
+- First callback (null in DB) + tokens → sets values (null treated as 0)
 - Second callback (existing values in DB) + tokens → sums correctly
 - Third callback → sums again (3 runs total)
 - Callback with zero tokens + existing values → no change to totals
@@ -412,14 +441,17 @@ Remove MPP preauthorization from `POST /api/v1/jobs`. The route already has Bear
 - "cloning" callback (no tokens expected) → no token columns touched
 - "executing" callback (no tokens expected) → no token columns touched
 
+**Stale callback guard:**
+- Tokens only accumulated after stale-callback check passes
+
 ### 6.3. Unit Tests — `telegram.test.ts` (token-specific)
 
 - Completed job with tokens and cost → shows "125K in / 45K out · $3.53"
 - Completed job without tokens (null) → no token line shown
 - Completed job with zero tokens → no token line shown
 - Failed job with partial tokens → shows partial token line
-- Token formatting: 1,234 → "1.2K", 1,234,567 → "1.2M", 999 → "999"
-- Cost formatting: 0.001234 → "$0.00", 3.52 → "$3.52", 123.45 → "$123.45"
+- Token formatting: 999 → "999", 1,234 → "1.2K", 1,234,567 → "1.2M"
+- Cost formatting: 0.001 → "$0.00", 3.52 → "$3.52", 123.45 → "$123.45"
 
 ### 6.4. Unit Tests — `cost.ts` edge cases
 
@@ -437,6 +469,7 @@ Remove MPP preauthorization from `POST /api/v1/jobs`. The route already has Bear
 
 - Verify MPP preauthorization removed — no 402 for missing MPP-Token when Bearer auth used
 - Verify no costFlops, authorizedFlops in response
+- Verify no mppChannelId stored
 
 ### 6.7. Integration Tests
 
@@ -462,24 +495,26 @@ Remove MPP preauthorization from `POST /api/v1/jobs`. The route already has Bear
 
 ### Feature-Specific
 
-- [ ] FLOPS billing code removed (billing.ts, mpp.ts, related env vars)
+- [ ] FLOPS billing code removed (billing.ts, mpp.ts, related env vars, all test fixtures)
 - [ ] DB migration: remove old columns, add token columns (nullable)
 - [ ] Callback route accepts token data and accumulates incrementally
-- [ ] Bedrock cost calculated from accumulated token totals
+- [ ] Bedrock + container cost calculated from accumulated token totals and duration
 - [ ] `GET /api/v1/jobs/:id` returns token and cost fields
 - [ ] Runner extracts token usage from OpenCode SQLite DB
 - [ ] Runner sends tokens on both normal completion and SIGTERM
-- [ ] Runner Docker image rebuilt and pushed to ECR
+- [ ] Runner Docker image rebuilt and pushed to ECR (with sqlite3 dependency)
 - [ ] Admin job detail page shows cost breakdown
 - [ ] Telegram notification includes token/cost summary
 - [ ] Existing jobs without token data display correctly (null handling)
 - [ ] Job submission works without MPP preauthorization
+- [ ] Code deployed before migration runs (deployment order)
 
 ## 8. References
 
 - [AWS Bedrock Pricing](https://aws.amazon.com/bedrock/pricing/) — Anthropic section
-- Claude Opus 4.6 on Bedrock: $5/M input, $25/M output, $6.25/M cache write (5m), $0.50/M cache read
-- OpenCode SQLite DB: `~/.local/share/opencode/opencode.db`, table `message`, field `data` contains `tokens` and `cost`
+- [AWS Fargate Spot Pricing](https://aws.amazon.com/fargate/pricing/) — us-east-1
+- Claude Opus 4 on Bedrock: $5/M input, $25/M output, $6.25/M cache write (5m), $0.50/M cache read
+- OpenCode SQLite DB: `${XDG_DATA_HOME:-$HOME/.local/share}/opencode/opencode.db`, table `message`, field `data` contains `tokens` and `cost`
 - Current billing code: `apps/web/src/domain/jobs/billing.ts`
 - Current callback route: `apps/web/src/app/api/internal/callback/route.ts`
 - DB schema: `apps/web/src/db/schema.ts`
