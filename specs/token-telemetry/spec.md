@@ -42,12 +42,16 @@ The runner sends `{jobId, status, prUrl?, lastCheckpointCommit?, ecsTaskArn?}` �
 Bash entrypoint runs `opencode run "..."` and pipes stdout to CloudWatch. OpenCode writes to stdout but doesn't report token usage to a file by default.
 - File: `runner/entrypoint.sh`
 
-### 4.5. AWS Bedrock Pricing (Claude Opus 4)
+### 4.5. AWS Bedrock Pricing (Anthropic models, on-demand, us-east-1)
 
-- Input: ~$15 per 1M tokens
-- Output: ~$75 per 1M tokens
-- Cache write: ~$18.75 per 1M tokens
-- Cache read: ~$1.50 per 1M tokens
+| Model | Input /1M | Output /1M | Cache write (5m) /1M | Cache write (1h) /1M | Cache read /1M |
+|-------|-----------|------------|----------------------|----------------------|----------------|
+| Claude Sonnet 4.6 | $3.00 | $15.00 | $3.75 | $6.00 | $0.30 |
+| Claude Sonnet 4.6 Long Context | $3.00 | $15.00 | $3.75 | $6.00 | $0.30 |
+| Claude Opus 4.6 | $5.00 | $25.00 | $6.25 | $10.00 | $0.50 |
+| Claude Opus 4.6 Long Context | $5.00 | $25.00 | $6.25 | $10.00 | $0.50 |
+
+We currently use Claude Opus 4.6 (`us.anthropic.claude-opus-4-6-v1`).
 
 ## 5. Considered Options
 
@@ -147,10 +151,10 @@ interface BedrockTokenUsage {
 }
 
 interface BedrockPricing {
-    inputPer1M: number;   // default: 15.00
-    outputPer1M: number;  // default: 75.00
-    cacheReadPer1M: number;  // default: 1.50
-    cacheWritePer1M: number; // default: 18.75
+    inputPer1M: number;   // default: 5.00 (Opus 4.6)
+    outputPer1M: number;  // default: 25.00 (Opus 4.6)
+    cacheReadPer1M: number;  // default: 0.50 (Opus 4.6)
+    cacheWritePer1M: number; // default: 6.25 (Opus 4.6, 5m TTL)
 }
 
 function calculateBedrockCost(usage: BedrockTokenUsage, pricing: BedrockPricing): number {
@@ -166,10 +170,10 @@ function calculateBedrockCost(usage: BedrockTokenUsage, pricing: BedrockPricing)
 Pricing constants stored as env vars with defaults:
 
 ```ts
-BEDROCK_INPUT_PRICE_PER_1M: z.coerce.number().default(15.00),
-BEDROCK_OUTPUT_PRICE_PER_1M: z.coerce.number().default(75.00),
-BEDROCK_CACHE_READ_PRICE_PER_1M: z.coerce.number().default(1.50),
-BEDROCK_CACHE_WRITE_PRICE_PER_1M: z.coerce.number().default(18.75),
+BEDROCK_INPUT_PRICE_PER_1M: z.coerce.number().default(5.00),
+BEDROCK_OUTPUT_PRICE_PER_1M: z.coerce.number().default(25.00),
+BEDROCK_CACHE_READ_PRICE_PER_1M: z.coerce.number().default(0.50),
+BEDROCK_CACHE_WRITE_PRICE_PER_1M: z.coerce.number().default(6.25),
 ```
 
 ### 6.4. Runner Token Extraction
@@ -328,7 +332,7 @@ PR: https://github.com/suverenum/dobby/pull/42
 ## 10. References
 
 - [AWS Bedrock Pricing](https://aws.amazon.com/bedrock/pricing/) — Anthropic section
-- [Anthropic Claude Opus 4 pricing](https://www.anthropic.com/pricing) — $15/M input, $75/M output
+- Claude Opus 4.6 on Bedrock: $5/M input, $25/M output, $6.25/M cache write (5m), $0.50/M cache read
 - Current billing code: `apps/web/src/domain/jobs/billing.ts`
 - Current callback route: `apps/web/src/app/api/internal/callback/route.ts`
 - DB schema: `apps/web/src/db/schema.ts`
