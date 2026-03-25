@@ -361,19 +361,95 @@ Remove MPP preauthorization from `POST /api/v1/jobs`. The route already has Bear
 - **Cons:** Depends on OpenCode SQLite schema (may change); no pre-authorization (can't cap spend per job); pricing env vars need manual updates
 - **Consequences:** When MPP is ready, we add it back on top of real cost data instead of fake FLOPS. The actual token counts make future pricing models much easier.
 
-## 6. Testing Strategy
+## 6. Testing Strategy (95%+ coverage target)
 
-### 6.1. Unit Tests
+### 6.1. Unit Tests — `cost.test.ts`
 
-- `cost.test.ts`: Test `calculateBedrockCost()` with various token counts, zero values, missing cache tokens
-- `callback/route.test.ts`: Test callback with token fields; verify incremental accumulation (null → set, existing → add); verify cost calculation
-- `telegram.test.ts`: Test notification format with and without token/cost data
+**`calculateBedrockCost()`:**
+- Standard usage: 100K input, 50K output, 200K cache read, 80K cache write → correct USD
+- Zero tokens across all fields → $0.00
+- Only input tokens (output/cache zero) → correct partial cost
+- Only output tokens → correct partial cost
+- Only cache read tokens → correct partial cost
+- Only cache write tokens → correct partial cost
+- Missing cache fields (undefined) → treated as zero
+- Large token counts (100M+) → no overflow, correct calculation
+- Fractional results: verify precision to 6 decimal places
 
-### 6.2. Integration Tests
+**`calculateContainerCost()`:**
+- Standard: 8m30s, 4 vCPU, 16 GB, 1 GB ephemeral → correct USD
+- Zero duration → $0.00
+- Very short duration (1 second) → correct fractional cost
+- Very long duration (6 hours max) → correct cost
+- Different vCPU counts (1, 2, 4, 8) → scales linearly
+- Zero ephemeral overage → no ephemeral cost component
 
-- Submit job, send callback with token data, verify `GET /api/v1/jobs/:id` returns correct totals
-- Send multiple callbacks (simulating Spot interruptions), verify tokens accumulate
-- Verify existing callbacks without token fields still work
+### 6.2. Unit Tests — `callback/route.test.ts` (token-specific)
+
+**Token acceptance:**
+- Callback with all token fields → stored correctly
+- Callback with only inputTokens/outputTokens → cache fields stay null
+- Callback with no token fields → existing behavior, no token columns touched
+- Callback with zero token values → stored as 0, not null
+
+**Incremental accumulation:**
+- First callback (null in DB) + tokens → sets values
+- Second callback (existing values in DB) + tokens → sums correctly
+- Third callback → sums again (3 runs total)
+- Callback with zero tokens + existing values → no change to totals
+- Callback with tokens + null existing → treated as 0 + new
+
+**Cost calculation on accumulation:**
+- bedrockCostUsd recalculated from accumulated totals, not summed from partial costs
+- containerCostUsd calculated from total duration (startedAt to finishedAt)
+- costUsd = bedrockCostUsd + containerCostUsd
+- Missing startedAt → containerCostUsd is null, costUsd = bedrockCostUsd only
+
+**Status-specific behavior:**
+- "completed" callback with tokens → tokens stored, cost calculated
+- "interrupted" callback with tokens → tokens stored, cost calculated (partial)
+- "failed" callback with tokens → tokens stored, cost calculated (partial)
+- "cloning" callback (no tokens expected) → no token columns touched
+- "executing" callback (no tokens expected) → no token columns touched
+
+### 6.3. Unit Tests — `telegram.test.ts` (token-specific)
+
+- Completed job with tokens and cost → shows "125K in / 45K out · $3.53"
+- Completed job without tokens (null) → no token line shown
+- Completed job with zero tokens → no token line shown
+- Failed job with partial tokens → shows partial token line
+- Token formatting: 1,234 → "1.2K", 1,234,567 → "1.2M", 999 → "999"
+- Cost formatting: 0.001234 → "$0.00", 3.52 → "$3.52", 123.45 → "$123.45"
+
+### 6.4. Unit Tests — `cost.ts` edge cases
+
+- Pricing env vars: default values used when not set
+- Custom pricing: override via env vars, verify calculation uses overrides
+- All pricing at zero → $0.00 regardless of tokens
+
+### 6.5. Unit Tests — API response (`GET /api/v1/jobs/:id`)
+
+- Job with all token fields → included in response
+- Job with null token fields (old job) → fields returned as null, no crash
+- Job with partial token fields → included as-is
+
+### 6.6. Unit Tests — Job submission (`POST /api/v1/jobs`)
+
+- Verify MPP preauthorization removed — no 402 for missing MPP-Token when Bearer auth used
+- Verify no costFlops, authorizedFlops in response
+
+### 6.7. Integration Tests
+
+- Submit job → callback with tokens → GET job → verify token fields and costs match
+- Submit job → 3 callbacks (interrupted, interrupted, completed) each with tokens → verify accumulation
+- Submit job → callback without tokens → GET job → token fields are null, no error
+- Old jobs in DB (no token columns before migration) → GET job → null token fields, no crash
+
+### 6.8. Admin UI Tests
+
+- Job detail with token data → renders cost breakdown section
+- Job detail without token data (old job) → renders "—" or hides section
+- Job detail with partial data (container cost but no tokens) → renders available data
 
 ## 7. Definition of Done
 
